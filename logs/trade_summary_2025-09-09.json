@@ -1,0 +1,33 @@
+{
+  "summary": {
+    "date": "2025-09-09",
+    "total_trades": 1,
+    "buy_orders": 1,
+    "sell_orders": 0,
+    "total_volume": 447020.0,
+    "gross_profit": 0.0,
+    "gross_loss": 0.0,
+    "net_profit": 0.0,
+    "win_rate": 0,
+    "largest_win": 0,
+    "largest_loss": 0,
+    "starting_balance": 10828591,
+    "ending_balance": 10381571.0,
+    "total_fees": 0.0,
+    "real_net_profit": 0.0
+  },
+  "trades": [
+    {
+      "timestamp": "2025-09-09 13:53:04.592121",
+      "code": "A006910",
+      "name": "보성파워텍",
+      "action": "BUY",
+      "quantity": 103,
+      "price": 4340.0,
+      "amount": 447020.0,
+      "order_id": "",
+      "strategy": "manual"
+    }
+  ],
+  "generated_at": "2025-09-09T14:36:35.521930"
+}

@@ -1,0 +1,12 @@
+{
+    "python.analysis.typeCheckingMode": "basic",
+    "python.analysis.diagnosticSeverityOverrides": {
+        "reportOptionalMemberAccess": "none",
+        "reportOptionalSubscript": "none",
+        "reportOptionalCall": "none",
+        "reportPrivateUsage": "none",
+        "reportUnknownArgumentType": "none",
+        "reportUnknownMemberType": "none",
+        "reportUnknownVariableType": "none"
+    }
+}

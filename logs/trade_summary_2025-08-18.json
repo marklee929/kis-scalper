@@ -1,0 +1,174 @@
+{
+  "summary": {
+    "date": "2025-08-18",
+    "total_trades": 14,
+    "buy_orders": 10,
+    "sell_orders": 4,
+    "total_volume": 1293180,
+    "gross_profit": 3644.4,
+    "gross_loss": 0,
+    "net_profit": 3644.4,
+    "win_rate": 100.0,
+    "largest_win": 948.0,
+    "largest_loss": 0,
+    "starting_balance": 684766,
+    "ending_balance": 120466
+  },
+  "trades": [
+    {
+      "timestamp": "2025-08-18 09:01:11.799550",
+      "code": "484590",
+      "name": "삼양컴텍",
+      "action": "BUY",
+      "quantity": 6,
+      "price": 15760,
+      "amount": 94560,
+      "order_id": "",
+      "strategy": "real_volume_screening"
+    },
+    {
+      "timestamp": "2025-08-18 09:02:07.668770",
+      "code": "484590",
+      "name": "삼양컴텍",
+      "action": "SELL",
+      "quantity": 6,
+      "price": 15380,
+      "amount": 92280,
+      "order_id": "",
+      "strategy": "손절 (-2.4%)"
+    },
+    {
+      "timestamp": "2025-08-18 09:04:07.909508",
+      "code": "484590",
+      "name": "삼양컴텍",
+      "action": "BUY",
+      "quantity": 6,
+      "price": 15240,
+      "amount": 91440,
+      "order_id": "",
+      "strategy": "real_volume_screening"
+    },
+    {
+      "timestamp": "2025-08-18 09:04:13.235926",
+      "code": "439580",
+      "name": "블루엠텍",
+      "action": "BUY",
+      "quantity": 15,
+      "price": 6360,
+      "amount": 95400,
+      "order_id": "",
+      "strategy": "real_volume_screening"
+    },
+    {
+      "timestamp": "2025-08-18 09:07:07.818375",
+      "code": "484590",
+      "name": "삼양컴텍",
+      "action": "BUY",
+      "quantity": 6,
+      "price": 15170,
+      "amount": 91020,
+      "order_id": "",
+      "strategy": "real_volume_screening"
+    },
+    {
+      "timestamp": "2025-08-18 09:07:13.175089",
+      "code": "439580",
+      "name": "블루엠텍",
+      "action": "BUY",
+      "quantity": 15,
+      "price": 6470,
+      "amount": 97050,
+      "order_id": "",
+      "strategy": "real_volume_screening"
+    },
+    {
+      "timestamp": "2025-08-18 09:09:16.442660",
+      "code": "439580",
+      "name": "블루엠텍",
+      "action": "SELL",
+      "quantity": 15,
+      "price": 6320,
+      "amount": 94800,
+      "order_id": "",
+      "strategy": "손절 (-2.3%)"
+    },
+    {
+      "timestamp": "2025-08-18 09:09:26.641353",
+      "code": "484590",
+      "name": "삼양컴텍",
+      "action": "SELL",
+      "quantity": 6,
+      "price": 14860,
+      "amount": 89160,
+      "order_id": "",
+      "strategy": "손절 (-2.0%)"
+    },
+    {
+      "timestamp": "2025-08-18 09:10:11.887756",
+      "code": "484590",
+      "name": "삼양컴텍",
+      "action": "BUY",
+      "quantity": 6,
+      "price": 14760,
+      "amount": 88560,
+      "order_id": "",
+      "strategy": "real_volume_screening"
+    },
+    {
+      "timestamp": "2025-08-18 09:10:17.178745",
+      "code": "439580",
+      "name": "블루엠텍",
+      "action": "BUY",
+      "quantity": 15,
+      "price": 6410,
+      "amount": 96150,
+      "order_id": "",
+      "strategy": "real_volume_screening"
+    },
+    {
+      "timestamp": "2025-08-18 09:13:11.979260",
+      "code": "484590",
+      "name": "삼양컴텍",
+      "action": "BUY",
+      "quantity": 6,
+      "price": 14900,
+      "amount": 89400,
+      "order_id": "",
+      "strategy": "real_volume_screening"
+    },
+    {
+      "timestamp": "2025-08-18 09:13:17.369724",
+      "code": "439580",
+      "name": "블루엠텍",
+      "action": "BUY",
+      "quantity": 15,
+      "price": 6340,
+      "amount": 95100,
+      "order_id": "",
+      "strategy": "real_volume_screening"
+    },
+    {
+      "timestamp": "2025-08-18 09:16:13.486439",
+      "code": "484590",
+      "name": "삼양컴텍",
+      "action": "BUY",
+      "quantity": 6,
+      "price": 15010,
+      "amount": 90060,
+      "order_id": "",
+      "strategy": "real_volume_screening"
+    },
+    {
+      "timestamp": "2025-08-18 09:19:18.787785",
+      "code": "484590",
+      "name": "삼양컴텍",
+      "action": "SELL",
+      "quantity": 6,
+      "price": 14700,
+      "amount": 88200,
+      "order_id": "",
+      "strategy": "손절 (-2.1%)"
+    }
+  ],
+  "generated_at": "2025-08-18T09:20:44.037009"
+}

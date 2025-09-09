@@ -1,0 +1,16 @@
+// filepath: c:\WORK\kis-scalper\pyrightconfig.json
+{
+    "typeCheckingMode": "basic",
+    "reportOptionalMemberAccess": "none",
+    "reportOptionalSubscript": "none",
+    "reportOptionalCall": "none",
+    "reportUnknownArgumentType": "none",
+    "reportUnknownMemberType": "none",
+    "reportUnknownVariableType": "none",
+    "reportPrivateUsage": "none",
+    "exclude": [
+        "**/.venv",
+        "**/venv",
+        "**/__pycache__"
+    ]
+}

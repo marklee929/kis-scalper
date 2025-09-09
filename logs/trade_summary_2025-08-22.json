@@ -1,0 +1,97 @@
+{
+  "summary": {
+    "date": "2025-08-22",
+    "total_trades": 7,
+    "buy_orders": 1,
+    "sell_orders": 6,
+    "total_volume": 833615.0,
+    "gross_profit": 7352.15,
+    "gross_loss": 0,
+    "net_profit": 7352.15,
+    "win_rate": 100.0,
+    "largest_win": 2848.1,
+    "largest_loss": 0,
+    "starting_balance": 0,
+    "ending_balance": 636815.0
+  },
+  "trades": [
+    {
+      "timestamp": "2025-08-22 12:30:58.555258",
+      "code": "397810",
+      "name": "애드포러스",
+      "action": "SELL",
+      "quantity": 19,
+      "price": 14990.0,
+      "amount": 284810.0,
+      "order_id": "",
+      "strategy": "manual"
+    },
+    {
+      "timestamp": "2025-08-22 12:31:09.531248",
+      "code": "484590",
+      "name": "삼양컴텍",
+      "action": "SELL",
+      "quantity": 3,
+      "price": 15830.0,
+      "amount": 47490.0,
+      "order_id": "",
+      "strategy": "manual"
+    },
+    {
+      "timestamp": "2025-08-22 12:41:00.646911",
+      "code": "333430",
+      "name": "일승",
+      "action": "SELL",
+      "quantity": 15,
+      "price": 5980.0,
+      "amount": 89700.0,
+      "order_id": "",
+      "strategy": "manual"
+    },
+    {
+      "timestamp": "2025-08-22 12:51:56.988994",
+      "code": "064260",
+      "name": "다날",
+      "action": "SELL",
+      "quantity": 20,
+      "price": 8120.0,
+      "amount": 162400.0,
+      "order_id": "",
+      "strategy": "manual"
+    },
+    {
+      "timestamp": "2025-08-22 12:52:02.973908",
+      "code": "032820",
+      "name": "우리기술",
+      "action": "SELL",
+      "quantity": 15,
+      "price": 3665.0,
+      "amount": 54975.0,
+      "order_id": "",
+      "strategy": "manual"
+    },
+    {
+      "timestamp": "2025-08-22 12:52:08.646617",
+      "code": "333430",
+      "name": "일승",
+      "action": "BUY",
+      "quantity": 16,
+      "price": 6150.0,
+      "amount": 98400.0,
+      "order_id": "",
+      "strategy": "manual"
+    },
+    {
+      "timestamp": "2025-08-22 12:53:08.987889",
+      "code": "333430",
+      "name": "일승",
+      "action": "SELL",
+      "quantity": 16,
+      "price": 5990.0,
+      "amount": 95840.0,
+      "order_id": "",
+      "strategy": "manual"
+    }
+  ],
+  "generated_at": "2025-08-22T15:03:04.863419"
+}
