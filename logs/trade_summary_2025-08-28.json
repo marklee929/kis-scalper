@@ -1,0 +1,53 @@
+{
+  "summary": {
+    "date": "2025-08-28",
+    "total_trades": 3,
+    "buy_orders": 2,
+    "sell_orders": 1,
+    "total_volume": 493825.0,
+    "gross_profit": 2000.0,
+    "gross_loss": 0,
+    "net_profit": 2000.0,
+    "win_rate": 100.0,
+    "largest_win": 2000.0,
+    "largest_loss": 0,
+    "starting_balance": 0,
+    "ending_balance": -93825.0
+  },
+  "trades": [
+    {
+      "timestamp": "2025-08-28 09:21:55.293760",
+      "code": "010620",
+      "name": "HD현대미포",
+      "action": "BUY",
+      "quantity": 1,
+      "price": 198200.0,
+      "amount": 198200.0,
+      "order_id": "",
+      "strategy": "manual"
+    },
+    {
+      "timestamp": "2025-08-28 09:31:30.457090",
+      "code": "466920",
+      "name": "SOL 조선TOP3플러스",
+      "action": "BUY",
+      "quantity": 3,
+      "price": 31875.0,
+      "amount": 95625.0,
+      "order_id": "",
+      "strategy": "manual"
+    },
+    {
+      "timestamp": "2025-08-28 09:31:55.414698",
+      "code": "010620",
+      "name": "HD현대미포",
+      "action": "SELL",
+      "quantity": 1,
+      "price": 200000.0,
+      "amount": 200000.0,
+      "order_id": "",
+      "strategy": "manual"
+    }
+  ],
+  "generated_at": "2025-08-28T09:32:18.783329"
+}

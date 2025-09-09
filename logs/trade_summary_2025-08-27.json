@@ -1,0 +1,141 @@
+{
+  "summary": {
+    "date": "2025-08-27",
+    "total_trades": 11,
+    "buy_orders": 5,
+    "sell_orders": 6,
+    "total_volume": 778800.0,
+    "gross_profit": 4248.0,
+    "gross_loss": 0,
+    "net_profit": 4248.0,
+    "win_rate": 100.0,
+    "largest_win": 708.0,
+    "largest_loss": 0,
+    "starting_balance": 0,
+    "ending_balance": 70800.0
+  },
+  "trades": [
+    {
+      "timestamp": "2025-08-27 12:37:45.420812",
+      "code": "005930",
+      "name": "삼성전자",
+      "action": "SELL",
+      "quantity": 1,
+      "price": 70800.0,
+      "amount": 70800.0,
+      "order_id": "",
+      "strategy": "manual"
+    },
+    {
+      "timestamp": "2025-08-27 12:42:48.397568",
+      "code": "005930",
+      "name": "삼성전자",
+      "action": "BUY",
+      "quantity": 1,
+      "price": 70800.0,
+      "amount": 70800.0,
+      "order_id": "",
+      "strategy": "manual"
+    },
+    {
+      "timestamp": "2025-08-27 12:52:49.420130",
+      "code": "005930",
+      "name": "삼성전자",
+      "action": "SELL",
+      "quantity": 1,
+      "price": 70800.0,
+      "amount": 70800.0,
+      "order_id": "",
+      "strategy": "manual"
+    },
+    {
+      "timestamp": "2025-08-27 12:57:51.117933",
+      "code": "005930",
+      "name": "삼성전자",
+      "action": "BUY",
+      "quantity": 1,
+      "price": 70800.0,
+      "amount": 70800.0,
+      "order_id": "",
+      "strategy": "manual"
+    },
+    {
+      "timestamp": "2025-08-27 13:07:53.388875",
+      "code": "005930",
+      "name": "삼성전자",
+      "action": "SELL",
+      "quantity": 1,
+      "price": 70800.0,
+      "amount": 70800.0,
+      "order_id": "",
+      "strategy": "manual"
+    },
+    {
+      "timestamp": "2025-08-27 13:12:53.635013",
+      "code": "005930",
+      "name": "삼성전자",
+      "action": "BUY",
+      "quantity": 1,
+      "price": 70800.0,
+      "amount": 70800.0,
+      "order_id": "",
+      "strategy": "manual"
+    },
+    {
+      "timestamp": "2025-08-27 13:22:57.801288",
+      "code": "005930",
+      "name": "삼성전자",
+      "action": "SELL",
+      "quantity": 1,
+      "price": 70800.0,
+      "amount": 70800.0,
+      "order_id": "",
+      "strategy": "manual"
+    },
+    {
+      "timestamp": "2025-08-27 13:30:26.501072",
+      "code": "005930",
+      "name": "삼성전자",
+      "action": "BUY",
+      "quantity": 1,
+      "price": 70800.0,
+      "amount": 70800.0,
+      "order_id": "",
+      "strategy": "manual"
+    },
+    {
+      "timestamp": "2025-08-27 13:40:29.304005",
+      "code": "005930",
+      "name": "삼성전자",
+      "action": "SELL",
+      "quantity": 1,
+      "price": 70800.0,
+      "amount": 70800.0,
+      "order_id": "",
+      "strategy": "manual"
+    },
+    {
+      "timestamp": "2025-08-27 13:45:58.973844",
+      "code": "005930",
+      "name": "삼성전자",
+      "action": "BUY",
+      "quantity": 1,
+      "price": 70800.0,
+      "amount": 70800.0,
+      "order_id": "",
+      "strategy": "manual"
+    },
+    {
+      "timestamp": "2025-08-27 13:56:03.823880",
+      "code": "005930",
+      "name": "삼성전자",
+      "action": "SELL",
+      "quantity": 1,
+      "price": 70800.0,
+      "amount": 70800.0,
+      "order_id": "",
+      "strategy": "manual"
+    }
+  ],
+  "generated_at": "2025-08-27T17:19:27.401847"
+}

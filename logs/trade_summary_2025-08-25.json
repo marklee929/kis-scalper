@@ -1,0 +1,86 @@
+{
+  "summary": {
+    "date": "2025-08-25",
+    "total_trades": 6,
+    "buy_orders": 1,
+    "sell_orders": 5,
+    "total_volume": 828433.0,
+    "gross_profit": 7290.7300000000005,
+    "gross_loss": 0,
+    "net_profit": 7290.7300000000005,
+    "win_rate": 100.0,
+    "largest_win": 2988.0,
+    "largest_loss": 0,
+    "starting_balance": 0,
+    "ending_balance": 629713.0
+  },
+  "trades": [
+    {
+      "timestamp": "2025-08-25 14:38:34.827664",
+      "code": "010140",
+      "name": "삼성중공업",
+      "action": "SELL",
+      "quantity": 15,
+      "price": 19920.0,
+      "amount": 298800.0,
+      "order_id": "",
+      "strategy": "manual"
+    },
+    {
+      "timestamp": "2025-08-25 14:38:35.802337",
+      "code": "020560",
+      "name": "아시아나항공",
+      "action": "SELL",
+      "quantity": 2,
+      "price": 9640.0,
+      "amount": 19280.0,
+      "order_id": "",
+      "strategy": "manual"
+    },
+    {
+      "timestamp": "2025-08-25 14:38:36.717245",
+      "code": "092730",
+      "name": "네오팜",
+      "action": "SELL",
+      "quantity": 2,
+      "price": 19420.0,
+      "amount": 38840.0,
+      "order_id": "",
+      "strategy": "manual"
+    },
+    {
+      "timestamp": "2025-08-25 14:38:37.647209",
+      "code": "466100",
+      "name": "클로봇",
+      "action": "SELL",
+      "quantity": 15,
+      "price": 18200.0,
+      "amount": 273000.0,
+      "order_id": "",
+      "strategy": "manual"
+    },
+    {
+      "timestamp": "2025-08-25 14:39:10.923598",
+      "code": "469750",
+      "name": "아이비젼웍스",
+      "action": "BUY",
+      "quantity": 69,
+      "price": 1440.0,
+      "amount": 99360.0,
+      "order_id": "",
+      "strategy": "manual"
+    },
+    {
+      "timestamp": "2025-08-25 15:09:13.915227",
+      "code": "469750",
+      "name": "아이비젼웍스",
+      "action": "SELL",
+      "quantity": 69,
+      "price": 1437.0,
+      "amount": 99153.0,
+      "order_id": "",
+      "strategy": "manual"
+    }
+  ],
+  "generated_at": "2025-08-25T20:36:10.055490"
+}

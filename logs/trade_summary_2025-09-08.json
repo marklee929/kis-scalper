@@ -1,0 +1,33 @@
+{
+  "summary": {
+    "date": "2025-09-08",
+    "total_trades": 1,
+    "buy_orders": 0,
+    "sell_orders": 1,
+    "total_volume": 51300.0,
+    "gross_profit": 0.0,
+    "gross_loss": 0.0,
+    "net_profit": 0.0,
+    "win_rate": 0,
+    "largest_win": 0,
+    "largest_loss": 0,
+    "starting_balance": 754925,
+    "ending_balance": 806225.0,
+    "total_fees": 0.0,
+    "real_net_profit": 0.0
+  },
+  "trades": [
+    {
+      "timestamp": "2025-09-08 12:07:39.408859",
+      "code": "A290650",
+      "name": "엘앤씨바이오",
+      "action": "SELL",
+      "quantity": 1,
+      "price": 51300.0,
+      "amount": 51300.0,
+      "order_id": "",
+      "strategy": "손절 (-2.1%)"
+    }
+  ],
+  "generated_at": "2025-09-08T12:11:42.597566"
+}

@@ -1,0 +1,54 @@
+{
+    "get_balance": {
+        "url": "/uapi/domestic-stock/v1/trading/inquire-psbl-order",
+        "method": "GET",
+        "tr_id": "TTTC8908R",
+        "token_required": true
+    },
+    "get_holdings": {
+        "url": "/uapi/domestic-stock/v1/trading/inquire-balance",
+        "method": "GET",
+        "tr_id": "TTTC8434R",
+        "token_required": true
+    },
+    "get_price": {
+        "url": "/uapi/domestic-stock/v1/quotations/inquire-price",
+        "method": "GET",
+        "tr_id": "FHKST01010100",
+        "token_required": true
+    },
+    "volume_rank": {
+        "url": "/uapi/domestic-stock/v1/quotations/volume-rank",
+        "method": "GET",
+        "tr_id": "FHPST01710000",
+        "token_required": true
+    },
+    "order_cash": {
+        "url": "/uapi/domestic-stock/v1/trading/order-cash",
+        "method": "POST",
+        "token_required": true
+    },
+    "order_cancel": {
+        "url": "/uapi/domestic-stock/v1/trading/order-rvsecncl",
+        "method": "POST",
+        "tr_id": "TTTC0803U",
+        "token_required": true
+    },
+    "get_pending_orders": {
+        "url": "/uapi/domestic-stock/v1/trading/inquire-order",
+        "method": "GET",
+        "tr_id": "FHKST03010200",
+        "token_required": true
+    },
+    "inquire_cancellable_orders": {
+        "url": "/uapi/domestic-stock/v1/trading/inquire-psbl-rvsecncl",
+        "method": "GET",
+        "tr_id": "TTTC8036R",
+        "token_required": true
+    },
+    "get_approval_key": {
+        "url": "/oauth2/Approval",
+        "method": "POST",
+        "token_required": false
+    }
+}
