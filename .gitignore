@@ -33,3 +33,16 @@ secrets.json
 # Build / dist
 build/
 dist/
+secrets/
+secrets.json
+.env
+.env.*
+__pycache__/
+logs/
+*.log
+*.pem
+*.p12
+*.key
+*.cer
+*.sqlite
+*.db
