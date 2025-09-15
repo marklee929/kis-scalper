@@ -1,5 +1,5 @@
 from typing import Dict, List, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time as dt_time
 from dataclasses import dataclass, asdict
 import json
 import os
@@ -47,7 +47,6 @@ class TradeSummaryManager:
         self.trades: List[TradeRecord] = []
         self.starting_balance = 0.0
         self.current_balance = 0.0
-        # 실시간 요약 정보를 메모리에 저장하지 않고, 필요시 تريد 목록에서 항상 재계산합니다.
         
     def set_starting_balance(self, balance: float):
         """시작 잔고 설정"""
@@ -77,7 +76,6 @@ class TradeSummaryManager:
             )
             self.trades.append(trade)
             
-            # 잔고 업데이트
             if action_upper == "BUY":
                 self.current_balance -= amount
             elif action_upper == "SELL":
@@ -87,6 +85,66 @@ class TradeSummaryManager:
             
         except Exception as e:
             logger.error(f"[TRADE] 거래 기록 실패: {e}")
+
+    def get_morning_sell_summary(self) -> str:
+        """오늘 아침(09:00-09:30)에 판매된 종목들의 요약을 생성합니다."""
+        now = datetime.now()
+        today_str = now.strftime('%Y-%m-%d')
+        yesterday = now - timedelta(days=1)
+
+        sell_window_start = now.replace(hour=9, minute=0, second=0, microsecond=0)
+        sell_window_end = now.replace(hour=9, minute=30, second=0, microsecond=0)
+
+        # 1. 오늘 아침에 매도된 거래 필터링
+        morning_sells = [t for t in self.trades 
+                         if t.action == 'SELL' and 
+                         sell_window_start <= t.timestamp <= sell_window_end]
+
+        if not morning_sells:
+            return "(금일 시초가 매도 내역이 없습니다.)"
+
+        # 2. 어제 매수 기록을 찾기 위한 데이터 준비
+        buy_trades_last_24h = [t for t in self.trades 
+                               if t.action == 'BUY' and t.timestamp >= yesterday]
+        
+        buy_positions = {}
+        for buy in buy_trades_last_24h:
+            if buy.code not in buy_positions:
+                buy_positions[buy.code] = []
+            buy_positions[buy.code].append(buy)
+
+        # 3. 매도 기록을 바탕으로 손익 계산
+        total_pnl = 0
+        total_investment = 0
+        sold_stocks_summary = []
+
+        for sell in morning_sells:
+            if sell.code in buy_positions and buy_positions[sell.code]:
+                # 가장 최근의 매수 기록을 가져옴 (종가매매이므로 하나만 있어야 정상)
+                buy_trade = buy_positions[sell.code].pop(0)
+                
+                pnl = (sell.price - buy_trade.price) * sell.quantity
+                profit_rate = (sell.price / buy_trade.price - 1) * 100
+                total_pnl += pnl
+                total_investment += buy_trade.amount
+
+                sold_stocks_summary.append(
+                    f"- {sell.name}: {profit_rate:+.2f}% (손익: {pnl:+,}원)"
+                )
+
+        avg_profit_rate = (total_pnl / total_investment) * 100 if total_investment > 0 else 0
+
+        # 4. 요약 텍스트 생성
+        lines = [
+            f"*📈 익일 종가 실현 요약 ({today_str})*",
+            "="*25,
+            f"- 총 실현 손익: *{total_pnl:+,}원*",
+            f"- 평균 수익률: *{avg_profit_rate:+.2f}%*",
+            f"- 매도 종목 수: {len(sold_stocks_summary)}개",
+            "\n*매도 종목 목록:*"]
+        lines.extend(sold_stocks_summary)
+        
+        return "\n".join(lines)
 
     def _calculate_summary_from_trades(self, date_str: str) -> Optional[DailySummary]:
         """메모리의 거래 목록에서 특정 날짜의 요약을 정확히 계산합니다."""

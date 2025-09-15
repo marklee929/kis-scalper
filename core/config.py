@@ -66,7 +66,8 @@ class Config:
                     "system": {
                         "log_level": "INFO",
                         "health_check_interval": 300,
-                        "backup_interval": 3600
+                        "backup_interval": 3600,
+                        "max_subscriptions": int(secrets.get("MAX_SUBSCRIPTIONS", 30))
                     }
                 }
                 

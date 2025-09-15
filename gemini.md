@@ -320,4 +320,384 @@ kis-scalper/
 - `core/integrated_trading_system.py`의 매매 루프에 **추가 진입 체크 지점** 삽입.
 - **조건 불충족 시 무조건 skip**, 조건 충족 시 1회 한정 체결 후 risk guard 적용.
 
+// 2025-09-11
 
+아래 명세로 한국 주식 자동매매 코드를 작성/리팩터링해줘. 
+기존 모듈명 예시는 유지해도 되고, 새로운 파일로 나눠도 된다.
+
+========================
+[전략 개요]
+- 장중(09:30~15:20)엔 매수 없음. 스코어만 실시간 업데이트.
+- 15:20~15:30 종가에 상위 5종목을 시장가 매수(현금 100% = 5등분).
+- 다음날 09:00~09:30에 보유 전 종목을 실시간 모니터링하며 트레일링 매도.
+- 09:30 정각: 미매도 잔량 전량 시장가 청산(손익무관).
+
+========================
+[데이터/모듈 요구]
+1) WebSocket 실시간 시세 (틱/체결강도/호가): subscribe/unsubscribe 지원
+2) 계좌/잔고 API: 보유종목 최대 30개 조회
+3) 주문 API: 시장가 매수/매도
+4) 로거/리포트: 체결·익절·손절·강제청산 이벤트 기록
+
+========================
+[스코어링 파이프라인]
+- 대상군 생성: 거래대금 상위 100 → 점수화 → 상위 30 유지
+- 점수 구성요소(가중합, 표준화 후 0~100 스케일):
+  S = 0.35*V + 0.25*K + 0.20*R + 0.10*C + 0.10*L
+  - V(거래량 유지율): sum(vol 14:50~15:20) / sum(vol 13:00~14:00)
+  - K(체결강도 평균): 14:50~15:20 평균 체결강도
+  - R(변동성 품질): 표준편차/ATR 대비 상승 편향(상승 캔들 비율, 고가근접도)
+  - C(클로징 스트렝스): (종가-저가)/(고가-저가) with 분모 0 방지
+  - L(막판 대금 증가율): 거래대금(14:50~15:20) / 거래대금(14:20~14:50)
+- 제외필터: ETF/ETN 키워드(“KODEX, TIGER, ARIRANG, HANARO, KBSTAR, KOSEF”), 관리·투자경고·단일가/VI 중인 종목
+- 랭킹은 매 분 갱신, 15:20에 최종 랭킹 스냅샷 사용
+
+========================
+[종가 매수 로직]
+- 트리거: 15:20:00
+- 상위 5종목 선정(동점 시 거래대금 큰 순)
+- 포지션 사이징: 현금의 20%씩 5종 균등. (미체결/잔여현금은 버퍼로 남겨도 OK)
+- 주문: 시장가 매수(종가체결 영역)
+
+========================
+[다음날 매도 로직(09:00~09:30)]
+- 대상: 전일 종가 매수 종목 + 기존 보유 잔량(최대 30)
+- 1분봉 기준 피크 추적 트레일링:
+  - peak = max(peak, 현재가)
+  - profit = (현재가/평단 - 1)
+  - 조건:
+    (A) profit >= MIN_PROFIT_PCT 이고 (peak/현재가 - 1) >= TRAIL_DROP_PCT → 즉시 시장가 매도
+    (B) profit < MIN_PROFIT_PCT 이더라도, (현재가 < 시초가 * OPEN_FAIL_DROP) → 즉시 시장가 매도
+- 반등 시도는 무시, 신속 청산 우선.
+- 09:30:00 강제청산: 남은 전량 시장가 매도.
+
+========================
+[오픈 갭 리스크 완화(선택적)]
+- 08:30~09:00 예상체결가/호가로 갭 위험 사전 표기:
+  - 예상 -3% 이상이면 “오픈 리스크”로 표시해두고 시초 매도 조건(B)에 자동 해당.
+
+========================
+[파라미터 (config)]
+MARKET_OPEN        = 09:00
+MARKET_CLOSE       = 15:30
+BUY_START          = 15:20
+OPEN_EXIT_END      = 09:30
+TOPK_BUY           = 5
+EACH_BUY_PCT       = 0.20      # 5종 균등
+TRAIL_DROP_PCT     = 0.006     # 0.6% 하락 시 트레일링 발동
+MIN_PROFIT_PCT     = 0.002     # +0.2% 이상 이익일 때만 트레일링 유효
+OPEN_FAIL_DROP     = 0.985     # 시초가 대비 -1.5% 하락 시 즉시 손절
+MIN_TURNOVER       = 10_000_000_000  # 100억 이상만
+EXCLUDE_KEYWORDS   = ["KODEX","TIGER","ARIRANG","HANARO","KBSTAR","KOSEF"]
+
+========================
+[엣지 케이스/안전장치]
+- 거래정지/VI/단일가 감지 시: 해당 종목 즉시 제외, 보유 중이면 09:30 강제청산 로직에만 걸림
+- 주문 실패/부분체결: 잔량은 09:30 강제청산 규칙 동일 적용
+- 데이터 결손: 최근값 carry-forward, 결측 비율>20%면 스코어 계산 제외
+- 중복 매수 금지: 당일 종가 매수는 1티커 1회 제한
+- 로그: (시간, 코드, 액션, 수량, 가격, PnL, 규칙트리거) 필수 기록
+
+========================
+[함수/파일 설계 예시]
+- strategies/score_monitor.py
+  - update_universe(), compute_scores(), topN(n=30), snapshot_at(time=15:20)
+- execution/close_buy.py
+  - select_top5_and_buy(snapshot), size_positions(cash), market_buy_batch(list)
+- execution/open_sell.py
+  - track_peak_and_trail(ws_stream), should_sell(state), market_sell(code, qty)
+  - force_liquidate_all(at=09:30)
+- risk/filters.py
+  - exclude_keywords(), exclude_special_remarks(), min_turnover_filter()
+- infra/websocket_runner.py
+  - subscribe(codes), on_tick(cb), on_minute_close(cb)
+- reporting/trade_summary.py
+  - write_event(), daily_summary()
+
+테스트:
+- 가짜 틱 데이터로 09:00~09:30 트레일링 동작 시뮬레이션
+- 15:20 스냅샷 고정 후 5종 매수 배분 검증
+- 주문 실패/부분체결/VI 전환 시 흐름 점검(예외처리)
+
+-- 종가 검증 추가
+목적
+
+한국 주식 종가매매 자동화 시스템을 구현한다.
+장중에는 후보 스코어만 업데이트하고, 15:20~종가에 상위 5종목을 시장가 매수, 다음날 09:00~09:30 트레일링 매도 후 09:30 강제청산한다. 주문은 전부 시장가로 처리한다.
+
+운영 타임라인(Asia/Seoul)
+
+장중 스코어링: 09:30 ~ 15:20 (매수 없음, 점수만 갱신)
+
+종가 매수: 15:20 트리거 → 종가(15:30) 체결 영역에서 Top5 균등 매수
+
+다음날 매도: 09:00 ~ 09:30
+
+1분봉 기준 피크 추적(trailing)으로 최대한 높은 가격에서 즉시 매도
+
+하락 전환 시 반등 무시, 즉시 시장가 청산
+
+09:30 정각: 잔량 전량 강제 시장가 청산
+
+데이터/의존
+
+WebSocket: 실시간 틱/1분봉, 체결가/체결강도, 호가(스프레드·호가잔량)
+
+계좌/잔고 API: 보유 종목(최대 30개)·평단·수량 조회
+
+주문 API: 시장가 매수/매도
+
+지수/섹터 데이터: KOSPI/KOSDAQ 지수, 섹터 지수(또는 섹터 대표 ETF)
+
+유니버스 & 제외 규칙
+
+장중 거래대금 상위 100종목 → 점수화 → 상위 30 유지(rolling)
+
+제외: ETF/ETN 키워드(“KODEX, TIGER, ARIRANG, HANARO, KBSTAR, KOSEF”), 관리/투자경고, 거래정지, VI/단일가
+
+최소 유동성: 당일 거래대금 ≥ 100억(파라미터화)
+
+스코어링 지표(합본)
+A. 기존(제미나이 제안 3개)
+
+종가 모멘텀(Closing Price Momentum)
+
+정의: 장 마감 근접 구간(예: 15:00~15:20) 현재가의 고가 근접도
+
+효과: 끝까지 힘이 유지되는 종목 선호
+
+이동평균선 정배열(MA Alignment)
+
+정의: 1분봉 기준 5 > 20(>60) 정배열 여부 및 거리
+
+효과: 일시 급등이 아닌 지속 상승 추세 선별
+
+시장대비 상대강도(Relative Strength vs Market, RS_mkt)
+
+정의: (14:50~15:20) 종목 수익률 − 지수 수익률
+
+효과: 시장보다 더 강한 종목 선별
+
+B. 보강(추가 6개)
+
+클로징 드라이브(Closing Drive, CD)
+
+정의: 15:00→15:20 가격 기울기 / 당일 ATR (정규화)
+
+효과: 막판 “끌어올림”이 의미 있는 추세 가속인지 측정
+
+VWAP 프리미엄(PVWAP)
+
+정의: (Close - VWAP) / VWAP (15:20 스냅샷)
+
+효과: 종가가 VWAP 위면 다음날 연속성↑
+
+마감 집중 거래비율(Last-30min Volume %, V30)
+
+정의: Vol(15:00~15:30) / Vol(전일 장중)
+
+효과: 막판 수급 집중 확인
+
+레인지 확장 품질(Range Expansion Quality, REQ)
+
+정의: (일중 True Range / ATR_20d) × (상승 캔들 비율·고가근접도 가중)
+
+효과: 단순 흔들기 vs 의미 있는 확장 구분
+
+유동성 패널티(Liquidity Penalty, LP) (감점 항목)
+
+정의: LP = α*(스프레드%) + β*(1/최상위 N틱 호가잔량합)
+
+효과: 체결 미끄럼(슬리피지) 리스크 축소
+
+섹터 상대강도(Relative Strength vs Sector, RS_sector)
+
+정의: (14:50~15:20) 종목 수익률 − 섹터 수익률
+
+효과: 섹터 내 주도주 선별
+
+참고: 고가근접도 CR = (Close - Low) / (High - Low + ε), ε로 0-division 방지.
+VWAP은 장중 누적 Σ(price×vol)/Σ(vol).
+
+점수식(정규화 후 가중합, 예시)
+
+각 지표는 z-score → 0~100 스케일로 정규화. 상관 높은 지표는 중복 반영 최소화.
+
+S_total = 
+  0.20*CD          # 클로징 드라이브
++ 0.15*PVWAP       # VWAP 프리미엄
++ 0.20*V30         # 마감 집중 거래비율
++ 0.15*REQ         # 레인지 확장 품질
++ 0.15*RS_mkt      # 시장대비 상대강도(기존)
++ 0.10*RS_sector   # 섹터대비 상대강도(신규)
++ 0.05*MA_align    # 정배열(5>20>60)
+- 0.10*LP          # 유동성 패널티(감점)
+
+
+임계 컷(점수 계산 전):
+
+거래대금 < MIN_TURNOVER(기본 100억) 제외
+
+스프레드 > MAX_SPREAD_PCT(예: 0.15%) 제외
+
+15:18~15:20 -0.8% 이상 급락: 제외
+
+당일 +15% 이상 & V30 > 35%: 과열 감점 또는 제외
+
+종가 매수 로직
+
+트리거: 15:20:00에 스코어 스냅샷 고정 → 정렬
+
+선정: 상위 5종목(동점 시 거래대금 큰 순)
+
+배분: 가용 현금 20% × 5 균등
+
+주문: 시장가 매수(종가 체결 영역)
+
+다음날 매도 로직(09:00~09:30)
+
+대상: 전일 종가 매수 종목 + 기존 보유 전체(최대 30개)
+
+피크 추적 트레일링(1분봉)
+
+peak = max(peak, price_now)
+
+profit = (price_now / avg_cost - 1)
+
+조건:
+
+(A) profit ≥ MIN_PROFIT_PCT AND (peak/price_now - 1) ≥ TRAIL_DROP_PCT ⇒ 즉시 시장가 매도
+
+(B) profit < MIN_PROFIT_PCT AND (price_now < open_price * OPEN_FAIL_DROP) ⇒ 즉시 시장가 손절
+
+반등(v-rebound) 은 고려하지 않음(즉시 청산 우선)
+
+09:30:00: 잔량 전부 시장가 강제청산
+
+(옵션) 08:30~09:00 예상체결가로 갭 하락 -3% 이상이면 자동으로 (B) 조건 해당.
+
+주문 정책
+
+모든 매수/매도 = 시장가
+
+중복매수 금지: 하루 한 티커 1회
+
+부분체결/실패 발생 시 남은 잔량은 09:30 강제청산 규칙 그대로 적용
+
+파라미터 (config 예시)
+MARKET_OPEN        = "09:00"
+MARKET_CLOSE       = "15:30"
+BUY_START          = "15:20"
+OPEN_EXIT_END      = "09:30"
+
+TOPK_BUY           = 5
+EACH_BUY_PCT       = 0.20          # 5종 균등
+MIN_TURNOVER       = 10_000_000_000 # 100억
+MAX_SPREAD_PCT     = 0.0015        # 0.15%
+
+TRAIL_DROP_PCT     = 0.006         # 0.6% 하락 시 트레일링 발동
+MIN_PROFIT_PCT     = 0.002         # +0.2% 이상 수익부터 트레일링 유효
+OPEN_FAIL_DROP     = 0.985         # 시초가 대비 -1.5% 손절
+
+EXCLUDE_KEYWORDS   = ["KODEX","TIGER","ARIRANG","HANARO","KBSTAR","KOSEF"]
+
+모듈/함수 구조(예시 이름, 자유 변경)
+
+strategies/score_monitor.py
+
+update_universe() : 거래대금 상위 100 추출
+
+compute_scores() : 지표 계산 → 정규화 → S_total 산출
+
+topN(n=30) : 상위 30 유지
+
+snapshot_at("15:20") : 최종 랭킹 고정
+
+execution/close_buy.py
+
+select_top5(snapshot)
+
+size_positions(cash, n=5, pct=0.20)
+
+market_buy_batch(tickers, sizes)
+
+execution/open_sell.py
+
+subscribe_positions(ws, holdings≤30)
+
+track_peak_and_trail(tick) → (A)/(B) 판단
+
+market_sell(code, qty)
+
+force_liquidate_all("09:30")
+
+risk/filters.py
+
+apply_exclusions(df, keywords, min_turnover, max_spread)
+
+cut_late_dip(df, window=2min, thr=-0.8%)
+
+infra/websocket_runner.py
+
+subscribe(codes) / unsubscribe(codes)
+
+on_tick(cb), on_minute_close(cb)
+
+reporting/trade_summary.py
+
+이벤트 로그: (시간, 코드, 액션, 수량, 가격, PnL, 트리거 규칙)
+
+일일 요약 리포트
+
+로깅 & 리포트
+
+필수 로그: 주문 전/후, 체결, (A)/(B)/강제청산 트리거, 스코어 스냅샷 Top30/Top5
+
+일일 리포트: 종가매수 목록, 익일 청산 결과, 총손익, 슬리피지·체결율
+
+테스트/검증(요구)
+
+백테스트(필수): 최근 60거래일, 동일 파라미터로 Top5 종가 매수/오픈 30분 청산 시뮬레이션
+
+아블레이션:
+
+(i) 기본 3지표만
+
+(ii) + PVWAP·V30·CD
+
+(iii) + RS_sector·LP
+
+(iv) + REQ
+→ 각 단계별 누적 수익률/최대 낙폭/승률/체결율 비교
+
+슬리피지 테스트: 스프레드·Depth 기반 체결가 오차 시뮬레이션
+
+실시간 모의: 틱 재생으로 09:00~09:30 트레일링 로직 작동 검증
+
+산출물
+
+파이썬 모듈 일체 + 설정 파일(config_trade_windows.py)
+
+실행 엔트리(main.py):
+
+09:30~15:20 스코어 업데이트 루프
+
+15:20 종가매수 실행
+
+(다음날) 09:00~09:30 트레일링 매도 + 09:30 강제청산
+
+README: 환경변수, API 키, 실행 방법, 파라미터 설명, 백테스트 방법
+
+구현 메모(수식 힌트)
+
+CD: 15:0015:20 1분봉 종가 선형회귀 기울기 / ATR_day, z→0100
+
+PVWAP: 장중 누적 VWAP, 15:20 스냅샷 사용
+
+V30: vol_last30 / vol_total
+
+REQ: TR_day/ATR_20d * (up_candle_ratio^γ) * (CR^δ) (γ, δ는 0.3~0.4 가중)
+
+LP: α*spread_pct + β*(1/depth_topN) → 점수는 100−정규화
+
+정규화: 롤링 분포(z-score) → [0,100], 이상치 clip

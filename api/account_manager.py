@@ -195,6 +195,25 @@ class KISAccountManager:
             logger.error(f"❌ [PRICE] {stock_code} 현재가 조회 오류: {e}")
             return {}
 
+    def get_total_assets(self) -> int:
+        """현재 총 자산(현금 + 주식 평가액)을 API를 통해 직접 조회합니다."""
+        try:
+            # logger.info("💰 [ASSETS] 총 자산 조회를 시작합니다...")
+            cash_balance = self.get_simple_balance()
+            positions = self.get_current_positions()
+            
+            stock_eval_balance = 0
+            if positions:
+                stock_eval_balance = sum(int(p.get('evlu_amt', 0)) for p in positions)
+                # logger.info(f"✅ [ASSETS] 주식 평가액: {stock_eval_balance:,.0f}원 ({len(positions)} 종목)")
+            
+            total_assets = cash_balance + stock_eval_balance
+            logger.info(f"✅ [ASSETS] API 조회 총 자산: {total_assets:,.0f}원 (현금: {cash_balance:,.0f}원 + 주식: {stock_eval_balance:,.0f}원)")
+            return total_assets
+        except Exception as e:
+            logger.error(f"❌ [ASSETS] 총 자산 조회 중 예외 발생: {e}", exc_info=True)
+            return 0
+
 def init_account_manager(app_key: str, app_secret: str, account_no: str):
     """계정 관리자 초기화"""
     return KISAccountManager(app_key, app_secret, account_no)

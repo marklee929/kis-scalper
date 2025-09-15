@@ -14,7 +14,7 @@ import inspect
 class KISWebSocketClient:
     """
     KIS 실시간 WebSocket 클라이언트.
-    - 자동 재연결
+    - 자동 재연결 (지수 백오프, 접속 키 갱신 포함)
     - 구독 유지/중복 방지
     - heartbeat (ping)
     """
@@ -52,6 +52,7 @@ class KISWebSocketClient:
         self._ping_thread: Optional[threading.Thread] = None
         self._reconnect_max_tries = reconnect_max_tries
         self._reconnect_attempts = 0
+        self._is_reconnecting = False
         self.market_cache = market_cache # 외부에서 주입받음
         if self.market_cache is None:
             logger.error("[WS] MarketCache가 주입되지 않았습니다. Client를 초기화할 수 없습니다.")
@@ -133,8 +134,11 @@ class KISWebSocketClient:
             logger.info(f"📡 [WS] 구독 해지: {code}")
 
     def on_open(self, ws):
-        logger.info("WebSocket 연결 성공")
+        logger.info("✅ WebSocket 연결 성공")
+        with self._reconnect_lock:
+            self._is_reconnecting = False
         self._connected_evt.set()
+        self._reconnect_attempts = 0 # 재연결 성공 시 시도 횟수 초기화
         self._start_ping_thread()
         try:
             # 초기 구독 종목들 전송
@@ -160,7 +164,8 @@ class KISWebSocketClient:
                 tr_id = header.get("tr_id")
 
                 if tr_id == "PINGPONG":
-                    logger.info("[WS] PINGPONG 수신")
+                    # logger.info("[WS] PINGPONG 수신")
+                    pass
                 #elif body.get("rt_cd") != "0":
                     #logger.warning(f"[WS] Error Message Received: {body}")
                 elif tr_id == "H0STCNT0":  # 실시간 주식 체결가 데이터
@@ -327,18 +332,47 @@ class KISWebSocketClient:
     def _schedule_reconnect(self):
         with self._reconnect_lock:
             if self._stop_evt.is_set(): return
+
+            if self._is_reconnecting:
+                logger.debug("[WS] 재연결이 이미 진행 중입니다.")
+                return
+            self._is_reconnecting = True
+
             if self._reconnect_max_tries and self._reconnect_attempts >= self._reconnect_max_tries:
                 logger.error("재연결 최대 횟수 도달 → 중지")
+                self._is_reconnecting = False
                 return
+            
             self._reconnect_attempts += 1
-            delay = min(5 * self._reconnect_attempts, 30)
+
+            # 5번 실패마다 접속 키 갱신 시도
+            if self._reconnect_attempts > 0 and self._reconnect_attempts % 5 == 0:
+                logger.warning(f"[WS] 재연결 {self._reconnect_attempts}회 실패. 접속 키 갱신을 시도합니다.")
+                try:
+                    new_key = self.api.get_approval_key()
+                    if new_key:
+                        self.approval_key = new_key
+                        logger.info("[WS] 새 접속 키로 갱신되었습니다.")
+                    else:
+                        logger.error("[WS] 새 접속 키 발급에 실패했습니다.")
+                except Exception as e:
+                    logger.error(f"[WS] 접속 키 갱신 중 오류: {e}")
+
+            # 지수 백오프 적용
+            delay = min(10 * (2 ** min(self._reconnect_attempts - 1, 5)), 300) # 10s, 20s, 40s, 80s, 160s, 300s (최대 5분)
             logger.info(f"[WS] {delay}s 후 재연결 시도 (#{self._reconnect_attempts})")
             threading.Thread(target=self._reconnect_after, args=(delay,), daemon=True).start()
 
     def _reconnect_after(self, delay: int):
         time.sleep(delay)
-        if self._stop_evt.is_set(): return
+        if self._stop_evt.is_set():
+            with self._reconnect_lock:
+                self._is_reconnecting = False
+            return
         try:
+            # 재연결 시도 직전에 플래그를 리셋하여, 이 시도가 실패하면 다음 스케줄링이 가능하도록 함
+            with self._reconnect_lock:
+                self._is_reconnecting = False
             self._spawn_ws()
         except Exception as e:
             logger.error(f"재연결 시작 실패: {e}")

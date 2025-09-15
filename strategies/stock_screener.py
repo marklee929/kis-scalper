@@ -111,7 +111,7 @@ def calculate_scalping_score(market_cache: MarketCache, code: str, api: KISApi, 
         'liquidity': 25,
         'volatility': 20,
         'spread':     10,
-        'turnover':   20,  # 기존 10 -> 20으로 상향, 합계=100
+        'turnover':   20,
         'momentum':   25,
     }
 
@@ -119,80 +119,64 @@ def calculate_scalping_score(market_cache: MarketCache, code: str, api: KISApi, 
         raw_code = code
         ncode = _normalize_code(code)
 
+        # 장 초반 데이터 부족 문제를 해결하기 위해 캔들 수 확인
+        candles = market_cache.get_candles(ncode, 1)
+        is_opening_market = len(candles) < 2
+
         # 가격
         current_price = stock_info.get('current_price')
         if not current_price:
             current_price = get_current_price(market_cache, raw_code, api, ncode)
-
         current_price = _safe_float(current_price, 0.0)
 
-        # 거래대금(누적) 확보: 후보 딕셔너리에 없으면 캔들로 근사
+        # 거래대금(누적) 확보
         volume_turnover = _safe_float(stock_info.get('volume_turnover'), 0.0)
         if volume_turnover <= 0.0:
             vt_est = _estimate_turnover_from_candles(market_cache, ncode, current_price)
             if vt_est > 0:
                 volume_turnover = vt_est
-
-        # 1) 유동성(누적 거래대금) 점수
-        #   100억/500억/1000억+ 구간. (원 단위)
-        if volume_turnover > 1000e8:      # 1000억 이상
-            scores['liquidity'] = 100
-        elif volume_turnover > 500e8:     # 500억 이상
-            scores['liquidity'] = 80
-        elif volume_turnover > 100e8:     # 100억 이상
-            scores['liquidity'] = 60
-        elif volume_turnover > 30e8:      # 30억 이상
-            scores['liquidity'] = 40
+        
+        # 장 시작 직후에는 거래대금 데이터가 부족하므로 기본 점수 부여
+        if is_opening_market and volume_turnover <= 0:
+            logger.debug(f"[SCREENER] 장 초반이므로 {ncode}의 유동성/거래대금에 기본 점수를 부여합니다.")
+            scores['liquidity'] = 60  # 최소 통과 점수(40) 이상
+            scores['turnover'] = 60   # 최소 통과 점수(60) 충족
         else:
-            scores['liquidity'] = 20
+            # 1) 유동성(누적 거래대금) 점수
+            if volume_turnover > 1000e8: scores['liquidity'] = 100
+            elif volume_turnover > 500e8: scores['liquidity'] = 80
+            elif volume_turnover > 100e8: scores['liquidity'] = 60
+            elif volume_turnover > 30e8: scores['liquidity'] = 40
+            else: scores['liquidity'] = 20
+
+            # 4) 거래대금 점수 (시장 관심도)
+            if volume_turnover > 1000e8: scores['turnover'] = 100
+            elif volume_turnover > 500e8: scores['turnover'] = 80
+            elif volume_turnover > 100e8: scores['turnover'] = 60
+            else: scores['turnover'] = 40
 
         # 2) 1분 변동성 점수 (현실화)
         daily_volatility = calculate_daily_volatility(market_cache, ncode)
-        # daily_volatility = 1분 수익률 표준편차(%) 가정
-        # 일반적으로 0.05%~0.7% 구간이 실전 단타 '적당한' 변동성
         dv = daily_volatility
-        if 0.15 <= dv <= 0.70:
-            scores['volatility'] = 100
-        elif 0.10 <= dv < 0.15 or 0.70 < dv <= 1.00:
-            scores['volatility'] = 80
-        elif 0.05 <= dv < 0.10 or 1.00 < dv <= 1.50:
-            scores['volatility'] = 60
-        else:
-            scores['volatility'] = 40  # 너무 낮아도/높아도 페널티
+        if 0.15 <= dv <= 0.70: scores['volatility'] = 100
+        elif 0.10 <= dv < 0.15 or 0.70 < dv <= 1.00: scores['volatility'] = 80
+        elif 0.05 <= dv < 0.10 or 1.00 < dv <= 1.50: scores['volatility'] = 60
+        else: scores['volatility'] = 40
 
         # 3) 호가 스프레드 점수
         spread = estimate_spread(current_price)
-        if spread <= 0.20:
-            scores['spread'] = 100
-        elif spread <= 0.30:
-            scores['spread'] = 80
-        elif spread <= 0.50:
-            scores['spread'] = 60
-        else:
-            scores['spread'] = 40
-
-        # 4) 거래대금 점수 (시장 관심도)
-        if volume_turnover > 1000e8:
-            scores['turnover'] = 100
-        elif volume_turnover > 500e8:
-            scores['turnover'] = 80
-        elif volume_turnover > 100e8:
-            scores['turnover'] = 60
-        else:
-            scores['turnover'] = 40
+        if spread <= 0.20: scores['spread'] = 100
+        elif spread <= 0.30: scores['spread'] = 80
+        elif spread <= 0.50: scores['spread'] = 60
+        else: scores['spread'] = 40
 
         # 5) 단기 모멘텀 점수 (5분)
         momentum_5m = get_momentum(market_cache, ncode, minutes=5)
-        if momentum_5m > 1.0:
-            scores['momentum'] = 100
-        elif momentum_5m > 0.5:
-            scores['momentum'] = 80
-        elif momentum_5m > 0.0:
-            scores['momentum'] = 60
-        elif momentum_5m > -0.3:  # -0.5 -> -0.3로 완화 (상승 전 눌림 허용)
-            scores['momentum'] = 40
-        else:
-            scores['momentum'] = 20
+        if momentum_5m > 1.0: scores['momentum'] = 100
+        elif momentum_5m > 0.5: scores['momentum'] = 80
+        elif momentum_5m > 0.0: scores['momentum'] = 60
+        elif momentum_5m > -0.3: scores['momentum'] = 40
+        else: scores['momentum'] = 20
 
         # 가중합(합계=100)
         total_score = sum((scores[k] * weights[k]) / 100.0 for k in weights.keys())

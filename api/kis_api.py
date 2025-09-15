@@ -3,6 +3,8 @@ import os
 from time import time
 from typing import Optional, Dict, Any
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from utils.logger import logger
 from datetime import datetime
 
@@ -19,6 +21,14 @@ class KISApi:
         self.account_no = account_no
         self.base_url = base_url
         self.session = requests.Session()
+
+        # 재시도 로직 추가
+        retries = Retry(total=3,
+                        backoff_factor=0.5, # 0.5s, 1s, 2s 간격으로 재시도
+                        status_forcelist=[429, 500, 502, 503, 504]) # 재시도할 상태 코드
+        adapter = HTTPAdapter(max_retries=retries)
+        self.session.mount('http://', adapter)
+        self.session.mount('https://', adapter)
 
         self.TOKEN_FILE = os.path.join("config", "token_status.json")
         self.APPROVAL_KEY_FILE = os.path.join("config", "websocket_access_key_status.json")
