@@ -2,7 +2,7 @@
 
 import time
 import threading
-from analytics.trade_summary import trade_summary
+from analytics import trade_summary
 
 class RealPositionManager:
     _instance = None

@@ -75,6 +75,8 @@ class MarketCache:
                 'price': latest_data.get('price', 0.0),
                 'change_rate': latest_data.get('change_rate', 0.0),
                 'acc_vol': latest_data.get('acc_vol', 0.0),
+                'ask_price': latest_data.get('ask_price', 0.0),
+                'bid_price': latest_data.get('bid_price', 0.0),
                 'is_holding': False,
                 'profit_rate': 0.0,
                 'buy_price': 0.0,
@@ -265,6 +267,32 @@ class MarketCache:
                 "last_count": len(self._last),
                 "tick_count": self._tick_count,
             }
+
+    def get_daily_vwap(self, code: str) -> float:
+        """지정된 종목의 일일 VWAP(거래량 가중 평균 가격)을 계산합니다."""
+        with self._lock:
+            candles = self.get_candles(code, 1) # 1분봉 기준
+            if not candles:
+                return 0.0
+            
+            total_pv = sum(c.get('close', 0) * c.get('volume', 0) for c in candles)
+            total_vol = sum(c.get('volume', 0) for c in candles)
+            
+            return total_pv / total_vol if total_vol > 0 else 0.0
+
+    def get_spread_pct(self, code: str) -> float:
+        """최신 호가를 기반으로 호가 스프레드 비율(%)을 계산합니다."""
+        with self._lock:
+            quote_info = self.get_quote_full(code)
+            if not quote_info:
+                return 10.0 # 정보 없으면 높은 페널티
+            
+            ask = quote_info.get('ask_price', 0)
+            bid = quote_info.get('bid_price', 0)
+            
+            if ask > 0 and bid > 0:
+                return ((ask - bid) / bid) * 100
+            return 10.0
         
     def load_historical_data(self, file_path: str) -> None:
         """

@@ -51,17 +51,50 @@ class Config:
                         "bot_token": secrets.get("TELEGRAM_TOKEN", ""),
                         "chat_id": secrets.get("TELEGRAM_CHAT_ID", "")
                     },
+                    "naver": {
+                        "client_id": secrets.get("NAVER_CLIENT_ID", ""),
+                        "client_secret": secrets.get("NAVER_CLIENT_SECRET", "")
+                    },
                     "trading": {
-                        "budget": self._load_balance() or int(secrets.get("BUDGET", 1000000)),  # balance.json 우선, 없으면 secrets.json
+                        "budget": self._load_balance() or int(secrets.get("BUDGET", 1000000)),
                         "max_positions": 5,
                         "max_daily_loss_pct": -5.0,
                         "position_size_pct": 2.0,
                         "stop_loss_pct": -0.8,
                         "take_profit_pct": 1.5,
                         "position_sizing_method": "dynamic",
-                        "enable_boot_mode_trading": True, # True: 장초반 즉시 거래, False: N분 후 거래
-                        "boot_mode_duration_min": 5,      # 부트 모드 지속 시간 (분)
-                        "initial_data_wait_min": 10       # 부트 모드 비활성 시 데이터 축적 대기 시간 (분)
+                        "enable_boot_mode_trading": True,
+                        "boot_mode_duration_min": 5,
+                        "initial_data_wait_min": 10,
+                        
+                        # 종가매매 & 익일매도 전략 파라미터 (2025-09-18 업데이트)
+                        "min_turnover": int(secrets.get("MIN_TURNOVER", 10000000000)), # 100억으로 상향
+                        "max_spread_pct": float(secrets.get("MAX_SPREAD_PCT", 0.0015)),
+                        "exclude_keywords": secrets.get("EXCLUDE_KEYWORDS", ["KODEX", "TIGER", "ARIRANG", "HANARO", "KBSTAR", "KOSEF", "인버스", "레버리지"]),
+                        "top_n_buy": int(secrets.get("TOP_N_BUY", 5)),
+                        "softmax_tau": float(secrets.get("SOFTMAX_TAU", 10.0)),
+                        "weight_min": float(secrets.get("WEIGHT_MIN", 0.10)),
+                        "weight_max": float(secrets.get("WEIGHT_MAX", 0.35)),
+                        
+                        # 매도 조건 현실화 (gemini.md 제안)
+                        "min_profit_pct_sell": float(secrets.get("MIN_PROFIT_PCT_SELL", 0.001)),
+                        "trail_drop_pct_sell": float(secrets.get("TRAIL_DROP_PCT_SELL", 0.004)),
+                        "open_fail_drop_ratio": float(secrets.get("OPEN_FAIL_DROP_RATIO", 0.99)),
+                        "hard_stop_from_avg_ratio": float(secrets.get("HARD_STOP_FROM_AVG_RATIO", 0.97)),
+                        "force_liquidate_at_930": secrets.get("FORCE_LIQUIDATE_AT_930", True),
+
+                        # 전략 가중치 (2025-09-18 추가)
+                        "strategy_weights": secrets.get("STRATEGY_WEIGHTS", {
+                            "cd": 0.20,
+                            "pvap": 0.15,
+                            "v30": 0.20,
+                            "req": 0.15,
+                            "rs_mkt": 0.15,
+                            "rs_sector": 0.10,
+                            "ma_align": 0.05,
+                            "lp": -0.10,
+                            "supply_score_multiplier": 0.5 # 100점 만점 점수를 50점 만점으로 변환
+                        })
                     },
                     "system": {
                         "log_level": "INFO",

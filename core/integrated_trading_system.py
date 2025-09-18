@@ -8,7 +8,7 @@ from typing import Dict, List, Optional, Set
 import numpy as np
 
 from api.account_manager import init_account_manager
-from analytics.trade_summary import trade_summary
+from analytics import trade_summary
 from utils.notifier import notifier
 from strategies.closing_price_trader import closing_price_stock_filter # 신규 종가매매 스크리너
 from utils.code_loader import code_loader
@@ -19,6 +19,11 @@ from web_socket.market_cache import init_market_cache
 from core.config import config
 from core.position_manager import RealPositionManager
 from utils.balance_manager import BalanceManager
+from utils.news_fetcher import news_fetcher
+
+logger = logging.getLogger(__name__)
+
+from utils.news_fetcher import news_fetcher
 
 logger = logging.getLogger(__name__)
 
@@ -132,7 +137,7 @@ class IntegratedTradingSystem:
 
     # --- 시간대별 로직 제어 --- #
     def _is_sell_time(self, now: datetime) -> bool:
-        return dt_time(9, 0) <= now.time() < dt_time(9, 30)
+        return dt_time(9, 0) <= now.time() < dt_time(15, 20)
 
     def _is_screening_time(self, now: datetime) -> bool:
         return dt_time(9, 30) <= now.time() < dt_time(15, 20)
@@ -154,50 +159,59 @@ class IntegratedTradingSystem:
     # --- 신규 워커: 매도, 스크리닝, 매수 --- #
 
     def _opening_sell_worker(self):
-        """익일 시초가 매도 로직 (09:00 ~ 09:30) - 트레일링 스탑 적용"""
+        """익일 매도 로직 (장중 지속) - 트레일링 스탑, 시가 실패, 하드 스탑 적용"""
         while not self.shutdown_event.is_set():
             try:
                 now = datetime.now()
                 if self._is_sell_time(now) and not self.sell_worker_done_today:
-                    # --- 매도 로직 초기화 ---
-                    if not self.positions_to_sell:
+                    # --- 매도 로직 초기화 (하루 한 번) ---
+                    if not self.positions_to_sell and self.position_manager.positions:
                         self.positions_to_sell = dict(self.position_manager.positions.items())
-                        if not self.positions_to_sell:
-                            logger.info("[SELL_WORKER] 매도할 보유 종목이 없습니다.")
-                            self.sell_worker_done_today = True
-                            continue
+                        logger.info(f"[SELL_WORKER] init: positions_to_sell={list(self.positions_to_sell.keys())}")
                         
-                        logger.info(f"[SELL_WORKER] 시초가 매도 로직 시작. 대상: {len(self.positions_to_sell)}개")
                         # 시가 및 초기 피크가 설정
                         for code, position in self.positions_to_sell.items():
-                            # TODO: 시가를 market_cache에서 가져와야 함
-                            open_price = self.market_cache.get_quote(code) # 임시
-                            if open_price:
+                            open_price = 0
+                            # 9시 이후 첫 가격을 시가로 설정 (최대 10초 대기)
+                            for _ in range(10):
+                                quote = self.market_cache.get_quote_full(code)
+                                if quote and quote.get('price') > 0 and now.time() >= dt_time(9,0):
+                                    open_price = quote.get('price')
+                                    break
+                                time.sleep(1)
+                            
+                            if open_price > 0:
                                 self.sell_open_prices[code] = open_price
-                                self.sell_peaks[code] = max(position.get('avg_price', open_price), open_price)
-                            else: # 시가 조회가 안될 경우, 매수 평균가를 기준으로 설정
-                                self.sell_open_prices[code] = position.get('avg_price', 0)
-                                self.sell_peaks[code] = position.get('avg_price', 0)
+                                self.sell_peaks[code] = max(position.get('price', open_price), open_price)
+                                logger.info(f"[SELL_WORKER] {position['name']} 시가 설정: {open_price}")
+                            else: 
+                                self.sell_open_prices[code] = position.get('price', 0)
+                                self.sell_peaks[code] = position.get('price', 0)
+                                logger.warning(f"[SELL_WORKER] {position['name']} 시가 조회 실패. 매수 평균가를 사용합니다.")
 
                     # --- 실시간 매도 조건 확인 루프 ---
+                    if not self.positions_to_sell:
+                        if not self.sell_worker_done_today:
+                            logger.info("[SELL_WORKER] 모든 보유 종목 매도 완료. 익일 매도 작업을 종료합니다.")
+                            # summary_text = trade_summary.get_morning_sell_summary()
+                            # notifier.send_message(summary_text)
+                            self.sell_worker_done_today = True
+                        continue
+
                     positions_to_check = list(self.positions_to_sell.keys())
                     for code in positions_to_check:
-                        current_price = self.market_cache.get_quote(code)
-                        if current_price:
-                            self._check_sell_conditions(code, current_price)
+                        quote = self.market_cache.get_quote_full(code)
+                        if quote and quote.get('price') > 0:
+                            self._check_sell_conditions(code, quote.get('price'))
                 
-                # --- 09:30 강제 청산 ---
-                if now.time() >= dt_time(9, 30) and not self.sell_worker_done_today:
-                    logger.warning("[SELL_WORKER] 09:30 도달, 미청산 종목 강제 매도")
-                    remaining_positions = list(self.positions_to_sell.keys())
-                    for code in remaining_positions:
-                        self._execute_sell(code, "Forced Liquidation")
-                    
-                    if not self.positions_to_sell:
-                        summary_text = trade_summary.get_morning_sell_summary()
-                        notifier.send_message(summary_text)
-                        self.sell_worker_done_today = True
-                        logger.info("[SELL_WORKER] 시초가 매도 및 요약 전송 로직 완료")
+                # --- 장 마감 시 작업 종료 처리 ---
+                if now.time() >= dt_time(15, 20) and not self.sell_worker_done_today:
+                    logger.info("[SELL_WORKER] 장 마감 시간 도달, 매도 작업을 종료합니다.")
+                    if self.positions_to_sell:
+                        logger.info(f"[SELL_WORKER] 미청산 종목: {list(self.positions_to_sell.keys())}")
+                        # summary_text = trade_summary.get_morning_sell_summary()
+                        # notifier.send_message(summary_text)
+                    self.sell_worker_done_today = True
 
                 time.sleep(2) # 2초마다 확인
             except Exception as e:
@@ -205,20 +219,32 @@ class IntegratedTradingSystem:
                 time.sleep(60)
 
     def _check_sell_conditions(self, code: str, current_price: float):
-        """gemini.md에 명시된 두 가지 매도 조건을 확인하고 매도를 실행합니다."""
-        position = self.positions_to_sell[code]
-        avg_price = position.get('avg_price', 0)
+        """gemini.md에 명시된 매도 조건을 확인하고 매도를 실행합니다."""
+        position = self.positions_to_sell.get(code)
+        if not position: return
+
+        avg_price = position.get('price', 0)
         if avg_price == 0: return
+
+        # 디버그 로그 추가
+        logger.debug(f"[SELL_TICK] {code} cur={current_price} avg={avg_price} open={self.sell_open_prices.get(code)} peak={self.sell_peaks.get(code)}")
 
         # 피크 가격 업데이트
         self.sell_peaks[code] = max(self.sell_peaks.get(code, 0), current_price)
         peak_price = self.sell_peaks[code]
 
         profit = (current_price / avg_price) - 1
+        trading_config = self.config.get('trading', {})
+
+        # 조건 (C): 평단 대비 하드 스탑
+        hard_stop_ratio = trading_config.get('hard_stop_from_avg_ratio', 0.97)
+        if current_price <= avg_price * hard_stop_ratio:
+            self._execute_sell(code, f"Hard Stop ({(current_price/avg_price-1):.2%})")
+            return
         
         # 조건 (A): 이익 실현 트레일링 스탑
-        min_profit_pct = self.config.get('trading', {}).get('min_profit_pct_sell', 0.002)
-        trail_drop_pct = self.config.get('trading', {}).get('trail_drop_pct_sell', 0.006)
+        min_profit_pct = trading_config.get('min_profit_pct_sell', 0.001)
+        trail_drop_pct = trading_config.get('trail_drop_pct_sell', 0.004)
         if profit >= min_profit_pct and (peak_price / current_price - 1) >= trail_drop_pct:
             self._execute_sell(code, f"Trailing Stop (수익률: {profit:.2%})")
             return
@@ -226,7 +252,7 @@ class IntegratedTradingSystem:
         # 조건 (B): 시초가 대비 하락 손절
         open_price = self.sell_open_prices.get(code, 0)
         if open_price > 0:
-            open_fail_drop_ratio = self.config.get('trading', {}).get('open_fail_drop_ratio', 0.985)
+            open_fail_drop_ratio = trading_config.get('open_fail_drop_ratio', 0.99)
             if profit < min_profit_pct and current_price < (open_price * open_fail_drop_ratio):
                 self._execute_sell(code, f"Open Fail Stop (시가대비: {(current_price/open_price-1):.2%})")
                 return
@@ -306,16 +332,50 @@ class IntegratedTradingSystem:
 
                     logger.info(f"[SCREENER] 후보군 업데이트 완료: {len(self.closing_price_candidates)}개")
 
-                    if self.closing_price_candidates:
-                        # Log and notify top 5 candidates
+                    if self.closing_price_candidates or volume_stocks:
                         top_n = 5
-                        message_lines = ["[종가매매 후보 업데이트]"]
-                        for i, stock in enumerate(self.closing_price_candidates[:top_n]):
-                            reason = f" ({stock['reason']})" if 'reason' in stock else ""
-                            score_display = f"점수: {stock['total_score']:.1f}" if stock['total_score'] > 0 else "Fallback"
-                            line = f"{i+1}. {stock['name']} ({stock['code']}) - {score_display}{reason}"
-                            message_lines.append(line)
+                        message_lines = ["*🔔 종가/스윙 후보 업데이트*"]
                         
+                        # 1. 종가매매 후보 추가
+                        message_lines.append("\n*📈 종가매매 후보*")
+                        if self.closing_price_candidates:
+                            for i, stock in enumerate(self.closing_price_candidates[:top_n]):
+                                reason = f" ({stock.get('reason', '')})" if stock.get('reason') else ""
+                                score_display = f"점수: {stock['total_score']:.1f}" if stock.get('total_score', 0) > 0 else "Fallback"
+                                
+                                # 상세 점수 문자열 생성
+                                scores_breakdown = ""
+                                if 'scores' in stock and stock['scores']:
+                                    scores_str = " ".join([f"{k}:{v:.0f}" for k, v in stock['scores'].items()])
+                                    scores_breakdown = f" ({scores_str})"
+                                
+                                line = f"{i+1}. {stock['name']} ({stock['code']}) - {score_display}{scores_breakdown}{reason}" 
+                                
+                                # 뉴스 검색 추가
+                                if news_fetcher:
+                                    news = news_fetcher.search_latest_news(stock['name'])
+                                    if news:
+                                        line += f"\n    - 📰 [{news['title']}]({news['link']})"
+                                message_lines.append(line)
+                        else:
+                            message_lines.append("- 후보 없음")
+
+                        # 2. 스윙 후보 추가 (40~70위)
+                        message_lines.append("\n*🪝 스윙 후보 (모니터링)*")
+                        swing_candidates_raw = volume_stocks[39:70] # 40위 ~ 70위
+                        
+                        if swing_candidates_raw:
+                            for i, stock in enumerate(swing_candidates_raw[:top_n]):
+                                line = f"{i+1}. {stock['name']} ({stock['code']}) (거래량순위: {stock.get('volume_rank', 'N/A')})"
+                                # 뉴스 검색 추가
+                                if news_fetcher:
+                                    news = news_fetcher.search_latest_news(stock['name'])
+                                    if news:
+                                        line += f"\n    - 📰 [{news['title']}]({news['link']})"
+                                message_lines.append(line)
+                        else:
+                            message_lines.append("- 후보 없음")
+
                         full_message = "\n".join(message_lines)
                         logger.info(full_message)
                         notifier.send_message(full_message)
@@ -330,74 +390,84 @@ class IntegratedTradingSystem:
                 time.sleep(300)
 
     def _closing_price_buy_worker(self):
-        """종가 매수 로직 (15:20 ~ 15:30), 후보군 부족 시 예비 후보군에서 보충"""
+        """종가 매수 로직 (15:20 ~ 15:30), 점수 기반 Softmax 가중 배분"""
         while not self.shutdown_event.is_set():
             try:
                 now = datetime.now()
                 if self._is_buy_time(now) and not self.buy_worker_done_today:
-                    logger.info("[BUY_WORKER] 종가 매수 로직 시작")
+                    logger.info("[BUY_WORKER] 종가 매수 로직 시작 (Softmax 가중 방식)")
+                    trade_summary.weighted_allocation_used_today = True
                     
-                    primary_candidates = self.closing_price_candidates[:5]
-                    final_buy_list = primary_candidates
-                    num_primary = len(primary_candidates)
+                    trading_config = self.config.get('trading', {})
+                    top_n = trading_config.get('top_n_buy', 5)
+                    tau = trading_config.get('softmax_tau', 10.0)
+                    w_min = trading_config.get('weight_min', 0.10)
+                    w_max = trading_config.get('weight_max', 0.35)
 
-                    if num_primary < 5:
-                        needed = 5 - num_primary
-                        logger.info(f"[BUY_WORKER] 실시간 후보군이 {num_primary}개 이므로, 예비 후보군에서 {needed}개를 보충합니다.")
-                        
-                        try:
-                            fallback_df = code_loader(top_n=10) # 예비 후보 10개 로드
-                            if not fallback_df.empty:
-                                primary_codes = {c['code'] for c in primary_candidates}
-                                
-                                # 예비 후보에서 중복 제거
-                                fallback_df = fallback_df[~fallback_df['종목코드'].isin(primary_codes)]
-                                
-                                # 부족한 만큼 예비후보에서 추가
-                                fallback_candidates_to_add = fallback_df.head(needed)
-                                
-                                for _, row in fallback_candidates_to_add.iterrows():
-                                    # 포맷을 primary_candidates와 동일하게 맞춤
-                                    final_buy_list.append({
-                                        'code': row['종목코드'],
-                                        'name': row['종목명'],
-                                        'reason': 'fallback' # 보충된 종목임을 표시
-                                    })
-                                logger.info(f"[BUY_WORKER] 예비 후보군에서 {len(fallback_candidates_to_add)}개 보충 완료.")
-                            else:
-                                logger.warning("[BUY_WORKER] 예비 후보군을 불러왔으나 비어있습니다.")
-                        except Exception as e:
-                            logger.error(f"[BUY_WORKER] 예비 후보군 처리 중 오류: {e}", exc_info=True)
+                    candidates = self.closing_price_candidates[:top_n]
 
-                    if not final_buy_list:
+                    if not candidates:
                         logger.warning("[BUY_WORKER] 최종 매수 후보군이 없습니다. 매수를 건너뜁니다.")
-                    else:
-                        logger.info("[BUY_WORKER] 매수 실행 직전, 최신 계좌 잔고를 조회합니다...")
-                        cash_balance = self.account_manager.get_simple_balance()
-                        logger.info(f"[BUY_WORKER] 조회된 주문 가능 현금: {cash_balance:,.0f}원")
+                        self.buy_worker_done_today = True
+                        continue
 
-                        if cash_balance < 10000: # 만원 미만일 경우 매수 절차 건너뛰기
-                            logger.warning(f"[BUY_WORKER] 주문 가능 현금이 {cash_balance:,.0f}원으로 너무 적어 매수를 건너뜁니다.")
-                            self.buy_worker_done_today = True
-                            continue
+                    logger.info("[BUY_WORKER] 매수 실행 직전, 최신 계좌 잔고를 조회합니다...")
+                    cash_balance = self.account_manager.get_simple_balance()
+                    logger.info(f"[BUY_WORKER] 조회된 주문 가능 현금: {cash_balance:,.0f}원")
 
-                        budget_per_stock = cash_balance / len(final_buy_list)
-                        logger.info(f"[BUY_WORKER] 최종 {len(final_buy_list)}개 종목 매수 시작. 종목당 예산: {budget_per_stock:,.0f}원")
+                    if cash_balance < 10000:
+                        logger.warning(f"[BUY_WORKER] 주문 가능 현금이 {cash_balance:,.0f}원으로 너무 적어 매수를 건너뜁니다.")
+                        self.buy_worker_done_today = True
+                        continue
 
-                        for stock in final_buy_list:
-                            code = stock['code']
-                            # API 호출 최소화를 위해 현재가는 매수 직전에만 조회
-                            price_info = self.account_manager.get_stock_price(code)
-                            current_price = float(price_info.get('stck_prpr', 0))
-                            if current_price > 0:
-                                shares = int(budget_per_stock // current_price)
-                                if shares > 0:
-                                    self.account_manager.place_buy_order_market(code, shares)
-                                    logger.info(f"[BUY] 시장가 매수 주문: {stock['name']} ({code}) {shares}주")
-                                    time.sleep(0.5) # 주문 API 과부하 방지
+                    logger.info(f"[BUY_WORKER] 총 {cash_balance:,.0f}원의 현금으로 가중치 기반 예산 분배를 시작합니다.")
+
+                    # --- Softmax 가중치 계산 ---
+                    scores = np.array([c.get('total_score', 0.0) for c in candidates], dtype=float)
+                    scores[scores == 0] = 1.0 # Fallback 종목에 최소 점수 부여
+
+                    z = scores / tau
+                    weights = np.exp(z - np.max(z))
+                    weights /= np.sum(weights)
+                    weights = np.clip(weights, w_min, w_max)
+                    weights /= np.sum(weights)
+                    
+                    logger.info(f"[BUY_WORKER] 최종 {len(candidates)}개 종목 매수 시작. 점수: {scores}, 가중치: {np.round(weights, 2)}")
+
+                    buy_names = []
+                    for stock, weight in zip(candidates, weights):
+                        budget_per_stock = cash_balance * weight
+                        code = stock['code']
+                        name = stock['name']
                         
-                        buy_names = [s['name'] for s in final_buy_list]
-                        notifier.send_message(f"종가 매수 완료: {', '.join(buy_names)}")
+                        price_info = self.account_manager.get_stock_price(code)
+                        current_price = float(price_info.get('stck_prpr', 0))
+                        
+                        if current_price > 0:
+                            shares = int(budget_per_stock // current_price)
+                            if shares > 0:
+                                result = None
+                                for attempt in range(3):
+                                    result = self.account_manager.place_buy_order_market(code, shares)
+                                    if result and result.get('success'):
+                                        logger.info(f"[BUY] 시장가 매수 주문 성공: {name} ({code}) {shares}주 (시도: {attempt+1})")
+                                        # 포지션 추가 및 거래 기록
+                                        self.position_manager.add_position(code, shares, current_price, name)
+                                        trade_summary.record_trade(
+                                            code=code, name=name, action='BUY', quantity=shares, price=current_price,
+                                            order_id=result.get('order_id', ''), strategy='ClosingPrice',
+                                            weight=weight, retry_count=attempt + 1
+                                        )
+                                        buy_names.append(name)
+                                        break
+                                    else:
+                                        logger.warning(f"[BUY] 시장가 매수 주문 실패: {name} ({code}), 재시도... ({attempt+1}/3)")
+                                        time.sleep(0.25)
+                                else: # 3회 모두 실패
+                                    logger.error(f"[BUY] 시장가 매수 주문 최종 실패: {name} ({code})")
+                    
+                    if buy_names:
+                        notifier.send_message(f"종가 매수 완료 (가중 배분): {', '.join(buy_names)}")
 
                     self.buy_worker_done_today = True
                     logger.info("[BUY_WORKER] 종가 매수 로직 완료")
@@ -423,11 +493,13 @@ class IntegratedTradingSystem:
             logger.info(f"[SUB_MGR] 신규 구독 추가: {list(codes_to_add)}")
             for code in codes_to_add:
                 self.ws_manager.subscribe(code)
+                time.sleep(0.3) # API 과부하 방지를 위한 지연
         
         if codes_to_remove:
             logger.info(f"[SUB_MGR] 기존 구독 해지: {list(codes_to_remove)}")
             for code in codes_to_remove:
                 self.ws_manager.unsubscribe(code)
+                time.sleep(0.3) # API 과부하 방지를 위한 지연
         
         # self.subscribed_codes는 ws_manager에서 관리되지만, 명시적으로 동기화
         self.subscribed_codes = required_codes
@@ -461,8 +533,9 @@ class IntegratedTradingSystem:
                 self.ws_manager.stop()
             data_logger.shutdown()
             event_logger.shutdown()
-            trade_summary.print_shutdown_summary()
-            notifier.send_message(f"시스템 종료\n\n{trade_summary.get_summary_text()}")
+            # trade_summary.print_shutdown_summary()
+            # notifier.send_message(f"시스템 종료\n\n{trade_summary.get_summary_text()}")
+            notifier.send_message("시스템 종료")
 
     def _signal_handler(self, signum, frame):
         self.shutdown()
