@@ -71,17 +71,18 @@ class Config:
                         "min_turnover": int(secrets.get("MIN_TURNOVER", 10000000000)), # 100억으로 상향
                         "max_spread_pct": float(secrets.get("MAX_SPREAD_PCT", 0.0015)),
                         "exclude_keywords": secrets.get("EXCLUDE_KEYWORDS", ["KODEX", "TIGER", "ARIRANG", "HANARO", "KBSTAR", "KOSEF", "인버스", "레버리지"]),
+                        "exclude_symbols": secrets.get("EXCLUDE_SYMBOLS", ["005930"]), # 삼성전자
                         "top_n_buy": int(secrets.get("TOP_N_BUY", 5)),
                         "softmax_tau": float(secrets.get("SOFTMAX_TAU", 10.0)),
                         "weight_min": float(secrets.get("WEIGHT_MIN", 0.10)),
                         "weight_max": float(secrets.get("WEIGHT_MAX", 0.35)),
                         
                         # 매도 조건 현실화 (gemini.md 제안)
-                        "min_profit_pct_sell": float(secrets.get("MIN_PROFIT_PCT_SELL", 0.001)),
-                        "trail_drop_pct_sell": float(secrets.get("TRAIL_DROP_PCT_SELL", 0.004)),
+                        "min_profit_pct_sell": float(secrets.get("MIN_PROFIT_PCT_SELL", 0.02)),
+                        "trail_drop_pct_sell": float(secrets.get("TRAIL_DROP_PCT_SELL", 0.012)),
                         "open_fail_drop_ratio": float(secrets.get("OPEN_FAIL_DROP_RATIO", 0.99)),
                         "hard_stop_from_avg_ratio": float(secrets.get("HARD_STOP_FROM_AVG_RATIO", 0.97)),
-                        "force_liquidate_at_930": secrets.get("FORCE_LIQUIDATE_AT_930", True),
+                        "force_liquidate_at_930": secrets.get("FORCE_LIQUIDATE_AT_930", False),
 
                         # 전략 가중치 (2025-09-18 추가)
                         "strategy_weights": secrets.get("STRATEGY_WEIGHTS", {

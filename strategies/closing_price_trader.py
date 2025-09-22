@@ -35,9 +35,11 @@ def apply_all_filters(candidates: List[Dict], market_cache: MarketCache) -> List
     min_turnover = trading_config.get('min_turnover', 10000000000)
     max_spread_pct = trading_config.get('max_spread_pct', 0.0015)
     exclude_keywords = trading_config.get('exclude_keywords', [])
+    exclude_symbols = trading_config.get('exclude_symbols', [])
 
     rejection_counts = {
         "keyword": 0,
+        "symbol": 0,
         "turnover": 0,
         "spread": 0,
         "total_candidates": len(candidates)
@@ -49,19 +51,25 @@ def apply_all_filters(candidates: List[Dict], market_cache: MarketCache) -> List
         name = c.get('name', '')
         turnover = _safe_float(c.get('turnover'))
 
-        # 1. 키워드 필터
+        # 1. 심볼 필터
+        if code in exclude_symbols:
+            logger.debug(f"[FILTER] {name}({code}) 제외: 제외 심볼 포함")
+            rejection_counts["symbol"] += 1
+            continue
+
+        # 2. 키워드 필터
         if any(keyword.upper() in name.upper() for keyword in exclude_keywords):
             logger.debug(f"[FILTER] {name}({code}) 제외: 제외 키워드 포함")
             rejection_counts["keyword"] += 1
             continue
 
-        # 2. 최소 거래대금 필터
+        # 3. 최소 거래대금 필터
         if turnover < min_turnover:
             logger.debug(f"[FILTER] {name}({code}) 제외: 거래대금 미달 ({turnover:,.0f} < {min_turnover:,.0f})")
             rejection_counts["turnover"] += 1
             continue
 
-        # 3. 유동성 필터 (호가 스프레드)
+        # 4. 유동성 필터 (호가 스프레드)
         spread_pct = market_cache.get_spread_pct(code)
         if spread_pct > max_spread_pct:
             logger.debug(f"[FILTER] {name}({code}) 제외: 스프레드 과다 ({spread_pct:.4f}% > {max_spread_pct}%)")
@@ -74,7 +82,8 @@ def apply_all_filters(candidates: List[Dict], market_cache: MarketCache) -> List
         f"[FILTER] 필터링 결과: "
         f"총 {rejection_counts['total_candidates']}개 중 "
         f"{len(final_candidates)}개 통과. "
-        f"탈락 사유: 키워드({rejection_counts['keyword']}개), "
+        f"탈락 사유: 심볼({rejection_counts['symbol']}개), "
+        f"키워드({rejection_counts['keyword']}개), "
         f"거래대금({rejection_counts['turnover']}개), "
         f"스프레드({rejection_counts['spread']}개)"
     )

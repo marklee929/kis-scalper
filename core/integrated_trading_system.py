@@ -308,13 +308,14 @@ class IntegratedTradingSystem:
                     if not self.closing_price_candidates and volume_stocks:
                         logger.warning("[SCREENER] 필터링된 후보가 없어 거래량 상위 종목으로 Fallback합니다.")
                         
-                        from strategies.closing_price_trader import EXCLUDE_KEYWORDS
+                        trading_config = self.config.get('trading', {})
+                        exclude_keywords = trading_config.get('exclude_keywords', [])
 
                         fallback_candidates = []
                         for stock in volume_stocks:
                             stock_name = stock.get('name', '')
                             # 제외 키워드가 포함된 종목은 건너뛰기 (대소문자 무시)
-                            if any(keyword.upper() in stock_name.upper() for keyword in EXCLUDE_KEYWORDS):
+                            if any(keyword.upper() in stock_name.upper() for keyword in exclude_keywords):
                                 continue
                             
                             fallback_candidates.append({
@@ -355,7 +356,8 @@ class IntegratedTradingSystem:
                                 if news_fetcher:
                                     news = news_fetcher.search_latest_news(stock['name'])
                                     if news:
-                                        line += f"\n    - 📰 [{news['title']}]({news['link']})"
+                                        time_str = f"({news.get('timestamp')}) " if news.get('timestamp') else ""
+                                        line += f"\n    - 📰 {time_str}[{news['title']}]({news['link']})"
                                 message_lines.append(line)
                         else:
                             message_lines.append("- 후보 없음")
@@ -371,7 +373,8 @@ class IntegratedTradingSystem:
                                 if news_fetcher:
                                     news = news_fetcher.search_latest_news(stock['name'])
                                     if news:
-                                        line += f"\n    - 📰 [{news['title']}]({news['link']})"
+                                        time_str = f"({news.get('timestamp')}) " if news.get('timestamp') else ""
+                                        line += f"\n    - 📰 {time_str}[{news['title']}]({news['link']})"
                                 message_lines.append(line)
                         else:
                             message_lines.append("- 후보 없음")
