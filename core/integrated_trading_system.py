@@ -362,10 +362,19 @@ class IntegratedTradingSystem:
                         else:
                             message_lines.append("- 후보 없음")
 
-                        # 2. 스윙 후보 추가 (40~70위)
-                        message_lines.append("\n*🪝 스윙 후보 (모니터링)*")
-                        swing_candidates_raw = volume_stocks[39:70] # 40위 ~ 70위
+                        # 2. 스윙 후보 추가 (동적 구간 설정)
+                        message_lines.append("
+*🪝 스윙 후보 (모니터링)*")
                         
+                        num_volume_stocks = len(volume_stocks)
+                        swing_candidates_raw = []
+                        if num_volume_stocks >= 70:
+                            swing_candidates_raw = volume_stocks[39:70]  # 40위 ~ 70위
+                        elif num_volume_stocks >= 30:
+                            # 목록이 30개 이상 70개 미만일 경우 하위 40%를 선택
+                            start_index = int(num_volume_stocks * 0.6)
+                            swing_candidates_raw = volume_stocks[start_index:]
+
                         if swing_candidates_raw:
                             for i, stock in enumerate(swing_candidates_raw[:top_n]):
                                 line = f"{i+1}. {stock['name']} ({stock['code']}) (거래량순위: {stock.get('volume_rank', 'N/A')})"
@@ -377,7 +386,7 @@ class IntegratedTradingSystem:
                                         line += f"\n    - 📰 {time_str}[{news['title']}]({news['link']})"
                                 message_lines.append(line)
                         else:
-                            message_lines.append("- 후보 없음")
+                            message_lines.append("- 후보 없음 (거래량 상위 종목 부족)")
 
                         full_message = "\n".join(message_lines)
                         logger.info(full_message)
