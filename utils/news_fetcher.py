@@ -39,9 +39,9 @@ class NaverNewsFetcher:
 
             latest_item = items[0]
             
-            # 날짜 형식 변환 (RFC 1123 -> HH:MM)
+            # 날짜 형식 변환 (RFC 1123 -> MM-DD HH:MM)
             pub_date = datetime.strptime(latest_item['pubDate'], '%a, %d %b %Y %H:%M:%S %z')
-            formatted_time = pub_date.strftime("%H:%M")
+            formatted_time = pub_date.strftime("%m-%d %H:%M")
 
             return {
                 "title": html.unescape(latest_item['title'].replace("<b>", "").replace("</b>", "")),

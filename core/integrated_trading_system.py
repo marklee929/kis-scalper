@@ -363,8 +363,7 @@ class IntegratedTradingSystem:
                             message_lines.append("- 후보 없음")
 
                         # 2. 스윙 후보 추가 (동적 구간 설정)
-                        message_lines.append("
-*🪝 스윙 후보 (모니터링)*")
+                        message_lines.append("*🪝 스윙 후보 (모니터링)*")
                         
                         num_volume_stocks = len(volume_stocks)
                         swing_candidates_raw = []
@@ -375,8 +374,19 @@ class IntegratedTradingSystem:
                             start_index = int(num_volume_stocks * 0.6)
                             swing_candidates_raw = volume_stocks[start_index:]
 
+                        # 스윙 후보에서 ETF 제외
+                        trading_config = self.config.get('trading', {})
+                        exclude_keywords = trading_config.get('exclude_keywords', [])
+                        
+                        filtered_swing_candidates = []
                         if swing_candidates_raw:
-                            for i, stock in enumerate(swing_candidates_raw[:top_n]):
+                            for stock in swing_candidates_raw:
+                                stock_name = stock.get('name', '')
+                                if not any(keyword.upper() in stock_name.upper() for keyword in exclude_keywords):
+                                    filtered_swing_candidates.append(stock)
+
+                        if filtered_swing_candidates:
+                            for i, stock in enumerate(filtered_swing_candidates[:top_n]):
                                 line = f"{i+1}. {stock['name']} ({stock['code']}) (거래량순위: {stock.get('volume_rank', 'N/A')})"
                                 # 뉴스 검색 추가
                                 if news_fetcher:
@@ -386,7 +396,7 @@ class IntegratedTradingSystem:
                                         line += f"\n    - 📰 {time_str}[{news['title']}]({news['link']})"
                                 message_lines.append(line)
                         else:
-                            message_lines.append("- 후보 없음 (거래량 상위 종목 부족)")
+                            message_lines.append("- 후보 없음 (거래량 상위 종목 부족 또는 필터링됨)")
 
                         full_message = "\n".join(message_lines)
                         logger.info(full_message)
