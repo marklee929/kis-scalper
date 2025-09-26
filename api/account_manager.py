@@ -113,6 +113,19 @@ class KISAccountManager:
         logger.info(f"📈 [BUY-MARKET] 시장가 매수 주문: {stock_code} {quantity}주")
         return self._place_order("TTTC0802U", stock_code, quantity, 0, "01")
 
+    def has_open_order(self, stock_code: str) -> bool:
+        """특정 종목에 대한 미체결 주문이 있는지 확인합니다."""
+        try:
+            open_orders = self.api.inquire_cancellable_orders()
+            if open_orders and open_orders.get("rt_cd") == "0":
+                for order in open_orders.get("output1", []):
+                    if order.get("pdno") == stock_code.lstrip('A').zfill(6):
+                        return True
+            return False
+        except Exception as e:
+            logger.error(f"[OPEN_ORDER] {stock_code} 미체결 주문 조회 오류: {e}")
+            return False
+
     def get_filled_qty(self, order_id: str) -> int:
         """주문 ID로 체결 수량을 조회합니다."""
         try:

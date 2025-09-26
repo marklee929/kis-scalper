@@ -10,8 +10,9 @@ import numpy as np
 from api.account_manager import init_account_manager
 from analytics import trade_summary
 from utils.notifier import notifier
-from strategies.closing_price_trader import closing_price_stock_filter # 신규 종가매매 스크리너
-from strategies.swing_screener import get_swing_candidates, is_etf_like # 신규 스윙 스크리너
+from strategies.closing_price_trader import closing_price_stock_filter
+from strategies.swing_screener import get_swing_candidates, is_etf_like
+from strategies.news_handler import on_news_event
 from data.data_logger import data_logger
 from data.event_logger import event_logger
 from web_socket.web_socket_manager import KISWebSocketClient
@@ -36,12 +37,12 @@ class IntegratedTradingSystem:
         self.subscribed_codes: Set[str] = set()
         self.beginning_total_assets = 0
 
-        # 종가 매매 전략용 상태 변수
         self.closing_price_candidates: List[Dict] = []
+        self.swing_candidates: Dict[str, Dict] = {}
+        self.last_news_timestamp: Dict[str, datetime] = {}
         self.sell_worker_done_today = False
         self.buy_worker_done_today = False
         
-        # 익일 매도 전략용 상태 변수
         self.positions_to_sell: Dict[str, Dict] = {}
         self.sell_peaks: Dict[str, float] = {}
         self.sell_open_prices: Dict[str, float] = {}
@@ -124,6 +125,7 @@ class IntegratedTradingSystem:
         threading.Thread(target=self._opening_sell_worker, daemon=True).start()
         threading.Thread(target=self._closing_price_screening_worker, daemon=True).start()
         threading.Thread(target=self._closing_price_buy_worker, daemon=True).start()
+        threading.Thread(target=self._news_event_worker, daemon=True).start()
         threading.Thread(target=self._daily_reset_worker, daemon=True).start()
         logger.info("[WORKER] 모든 워커 시작 완료")
 
@@ -144,6 +146,7 @@ class IntegratedTradingSystem:
                     logger.info("[SYSTEM] 자정 리셋: 일일 작업 플래그를 초기화합니다.")
                     self.sell_worker_done_today = False
                     self.buy_worker_done_today = False
+                    self.last_news_timestamp = {}
             time.sleep(60)
 
     def _opening_sell_worker(self):
@@ -203,6 +206,7 @@ class IntegratedTradingSystem:
         avg_price = position.get('price', 0)
         if avg_price == 0: return
 
+        now = datetime.now()
         logger.debug(f"[SELL_TICK] {code} cur={current_price} avg={avg_price} open={self.sell_open_prices.get(code)} peak={self.sell_peaks.get(code)}")
 
         self.sell_peaks[code] = max(self.sell_peaks.get(code, 0), current_price)
@@ -210,6 +214,14 @@ class IntegratedTradingSystem:
 
         profit = (current_price / avg_price) - 1
         trading_config = self.config.get('trading', {})
+
+        early_session_end_time_str = trading_config.get("early_session_end_time", "09:05")
+        early_session_end_time = dt_time.fromisoformat(early_session_end_time_str)
+        if now.time() < early_session_end_time:
+            early_hard_stop_ratio = trading_config.get('early_session_hard_stop_ratio', 0.98)
+            if current_price <= avg_price * early_hard_stop_ratio:
+                self._execute_sell(code, f"Early Hard Stop ({(current_price/avg_price-1):.2%})")
+                return
 
         hard_stop_ratio = trading_config.get('hard_stop_from_avg_ratio', 0.97)
         if current_price <= avg_price * hard_stop_ratio:
@@ -258,7 +270,8 @@ class IntegratedTradingSystem:
                     volume_stocks = self.account_manager.get_volume_ranking(count=100)
                     logger.info(f"[SCREENER] volume_top100={len(volume_stocks)}")
 
-                    swing_candidates = get_swing_candidates(volume_stocks, self.config)
+                    swing_candidates_list = get_swing_candidates(volume_stocks, self.config, self.market_cache)
+                    self.swing_candidates = {s['code']: s for s in swing_candidates_list}
 
                     self.closing_price_candidates = closing_price_stock_filter(
                         self.market_cache, volume_stocks, self.account_manager.api
@@ -281,9 +294,9 @@ class IntegratedTradingSystem:
                         self.closing_price_candidates = fallback_candidates
 
                     logger.info(f"[SCREENER] 종가매매 후보군 업데이트 완료: {len(self.closing_price_candidates)}개")
-                    logger.info(f"[SCREENER] 스윙 후보군 업데이트 완료: {len(swing_candidates)}개")
+                    logger.info(f"[SCREENER] 스윙 후보군 업데이트 완료: {len(self.swing_candidates)}개")
 
-                    if self.closing_price_candidates or swing_candidates:
+                    if self.closing_price_candidates or self.swing_candidates:
                         top_n = 5
                         message_lines = ["*🔔 종가/스윙 후보 업데이트*"]
                         message_lines.append("\n*📈 종가매매 후보*")
@@ -296,8 +309,8 @@ class IntegratedTradingSystem:
                             message_lines.append("- 후보 없음")
 
                         message_lines.append("\n*🪝 스윙 후보 (모니터링)*")
-                        if swing_candidates:
-                            for i, stock in enumerate(swing_candidates[:top_n]):
+                        if self.swing_candidates:
+                            for i, stock in enumerate(list(self.swing_candidates.values())[:top_n]):
                                 line = f"{i+1}. {stock['name']} ({stock['code']}) (거래량순위: {stock.get('volume_rank', 'N/A')})"
                                 message_lines.append(line)
                         else:
@@ -308,12 +321,39 @@ class IntegratedTradingSystem:
                         notifier.send_message(full_message)
                     
                     closing_codes = {self._normalize_code(c['code']) for c in self.closing_price_candidates}
-                    swing_codes = {self._normalize_code(c['code']) for c in swing_candidates}
+                    swing_codes = {self._normalize_code(c['code']) for c in self.swing_candidates.values()}
                     self._update_subscriptions(closing_codes.union(swing_codes))
 
                 time.sleep(300)
             except Exception as e:
                 logger.error(f"[SCREENER] 오류: {e}", exc_info=True)
+                time.sleep(300)
+
+    def _news_event_worker(self):
+        """주기적으로 스윙 후보에 대한 뉴스를 확인하고 매수를 트리거합니다."""
+        while not self.shutdown_event.is_set():
+            try:
+                if not self.swing_candidates or not news_fetcher:
+                    time.sleep(20)
+                    continue
+
+                logger.info(f"[NEWS-WORKER] {len(self.swing_candidates)}개 스윙 후보 뉴스 확인 시작...")
+                for code, stock in self.swing_candidates.items():
+                    news_item = news_fetcher.search_latest_news(stock['name'])
+                    if news_item and news_item.get('published_at'):
+                        if self.last_news_timestamp.get(code) != news_item['published_at']:
+                            self.last_news_timestamp[code] = news_item['published_at']
+                            news_item['query'] = stock['name']
+                            on_news_event(
+                                news_item=news_item,
+                                swing_candidates=self.swing_candidates,
+                                broker=self.account_manager,
+                                position_mgr=self.position_manager,
+                                cfg=self.config
+                            )
+                time.sleep(60)
+            except Exception as e:
+                logger.error(f"[NEWS-WORKER] 오류: {e}", exc_info=True)
                 time.sleep(300)
 
     def _closing_price_buy_worker(self):
@@ -372,10 +412,10 @@ class IntegratedTradingSystem:
 
                         budget_per_stock = cash_balance * weight
                         
-                        orderbook = self.market_cache.get_orderbook(code)
-                        if not orderbook or not orderbook.get('ask_hoga'):
+                        quote_info = self.market_cache.get_quote_full(code)
+                        if not quote_info or not quote_info.get('ask_price', 0) > 0:
                             logger.warning(f"[BUY_WORKER] {name} ({code}) 호가 정보가 없어 시장가로 주문합니다.")
-                            current_price = self.market_cache.get_quote(code) or 0
+                            current_price = quote_info.get('price', 0) if quote_info else 0
                             if current_price > 0:
                                 shares = int(budget_per_stock // current_price)
                                 if shares > 0:
@@ -391,8 +431,7 @@ class IntegratedTradingSystem:
                                         buy_names.append(name)
                             continue
 
-                        ask_prices = sorted([float(p) for p in orderbook['ask_hoga'].keys()])
-                        best_ask = ask_prices[0] if ask_prices else 0
+                        best_ask = quote_info.get('ask_price', 0)
 
                         if best_ask > 0:
                             shares = int(budget_per_stock // best_ask)
@@ -416,7 +455,7 @@ class IntegratedTradingSystem:
                                 else:
                                     logger.error(f"[BUY] LTM 매수 최종 실패: {name} ({code}). 메시지: {result.msg}")
                         else:
-                            logger.warning(f"[BUY_WORKER] {name} ({code}) 최우선 매도 호가를 찾을 수 없어 매수를 건너뜁니다.")
+                            logger.warn(f"[BUY_WORKER] {name} ({code}) 최우선 매도 호가를 찾을 수 없어 매수를 건너뜁니다.")
 
                     if buy_names:
                         notifier.send_message(f"종가 매수 완료 (LTM 방식): {', '.join(buy_names)}")
@@ -440,7 +479,7 @@ class IntegratedTradingSystem:
         codes_to_remove = self.subscribed_codes - required_codes
 
         if codes_to_add:
-            logger.info(f"[SUB_MGR] 신규 구독 추가: {list(codes_to_add)}")
+            logger.info(f"[SUB_MCR] 신규 구독 추가: {list(codes_to_add)}")
             for code in codes_to_add:
                 self.ws_manager.subscribe(code)
                 time.sleep(0.3)

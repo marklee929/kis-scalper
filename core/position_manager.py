@@ -29,6 +29,11 @@ class RealPositionManager:
         with self._position_lock:
             return self.positions.get(code)
 
+    def has_position(self, code: str) -> bool:
+        """특정 종목의 포지션 보유 여부를 확인합니다."""
+        with self._position_lock:
+            return code in self.positions
+
     def add_position(self, code, shares, price, name=""):
         with self._position_lock:
             self.positions[code] = {
