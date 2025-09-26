@@ -70,7 +70,19 @@ class Config:
                         # 종가매매 & 익일매도 전략 파라미터 (2025-09-18 업데이트)
                         "min_turnover": int(secrets.get("MIN_TURNOVER", 10000000000)), # 100억으로 상향
                         "max_spread_pct": float(secrets.get("MAX_SPREAD_PCT", 0.0015)),
-                        "exclude_keywords": secrets.get("EXCLUDE_KEYWORDS", ["KODEX", "TIGER", "ARIRANG", "HANARO", "KBSTAR", "KOSEF", "ETF", "인버스", "레버리지", "삼성전자"]),
+                        "exclude_keywords": secrets.get("EXCLUDE_KEYWORDS", [
+                            "ETF", "ETN", "인버스", "레버리지", "선물", "합성",
+                            "KODEX", "TIGER", "ARIRANG", "HANARO", "KBSTAR", "KOSEF",
+                            "KINDEX", "SOL", "SMART", "TRUE", "FOCUS"
+                        ]),
+                        "exclude_regex": secrets.get("EXCLUDE_REGEX", [
+                            "(?i)\\bETF\\b",
+                            "(?i)\\bETN\\b",
+                            "(?i)인버스",
+                            "(?i)레버리지",
+                            "(?i)선물",
+                            "(?i)합성"
+                        ]),
                         "exclude_symbols": secrets.get("EXCLUDE_SYMBOLS", ["005930"]), # 삼성전자
                         "top_n_buy": int(secrets.get("TOP_N_BUY", 5)),
                         "softmax_tau": float(secrets.get("SOFTMAX_TAU", 10.0)),

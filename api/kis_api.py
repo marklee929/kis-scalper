@@ -283,9 +283,10 @@ class KISApi:
 
     def cancel_order(self, order: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """주어진 주문을 취소합니다."""
+        cano, acnt_prdt_cd = self._get_account_parts()
         body = {
-            "CANO": self.account_no[:8],
-            "ACNT_PRDT_CD": self.account_no[8:],
+            "CANO": cano,
+            "ACNT_PRDT_CD": acnt_prdt_cd,
             "ORGN_ODNO": order.get("odno"),
             "ORD_DVSN": order.get("ord_dvsn_cd"),
             "RVSE_CNCL_DVSN_CD": "02", # 취소
@@ -297,4 +298,31 @@ class KISApi:
             return self.request("order_cancel", body=body)
         except Exception as e:
             logger.error(f"[API] 주문 취소 실패 (주문번호: {order.get('odno')}): {e}")
+            return None
+
+    def get_order_details(self, order_id: str) -> Optional[Dict[str, Any]]:
+        """특정 주문 번호에 대한 상세 정보를 조회합니다."""
+        cano, acnt_prdt_cd = self._get_account_parts()
+        params = {
+            "CANO": cano,
+            "ACNT_PRDT_CD": acnt_prdt_cd,
+            "FK100": "",
+            "NK100": "",
+            "INQR_DVSN": "00", # 주문별
+            "INQR_DVSN_1": "0", # 전체
+            "INQR_DVSN_2": "0", # 전체
+            "SLL_BUY_DVSN_CD": "00", # 전체
+            "CCLD_YN": "0", # 전체
+            "ORD_GNO_BRNO": "", # 주문채번지점번호
+            "ODNO": order_id, # 주문번호
+        }
+        try:
+            data = self.request("get_pending_orders", params=params)
+            if data and data.get("rt_cd") == "0" and data.get("output1"):
+                for order in data["output1"]:
+                    if order.get("odno") == order_id:
+                        return order
+            return None
+        except Exception as e:
+            logger.error(f"[API] 주문 상세 조회 실패 (주문번호: {order_id}): {e}")
             return None

@@ -1,11 +1,19 @@
 """
-KIS API 계정 관리자 (v2: KISApi 사용 리팩토링)
+KIS API 계정 관리자 (v3: Limit-then-Market 로직 추가)
 """
-from typing import Dict, List
+import time
+from typing import Dict, List, Optional
 import logging
 from api.kis_api import KISApi
 
 logger = logging.getLogger(__name__)
+
+class OrderResult:
+    def __init__(self, ok: bool, order_id: Optional[str], filled_qty: int, msg: str = ""):
+        self.ok = ok
+        self.order_id = order_id
+        self.filled_qty = filled_qty
+        self.msg = msg
 
 class KISAccountManager:
     """KIS 계정 관리자 - KISApi를 사용하여 API 호출을 위임"""
@@ -27,31 +35,24 @@ class KISAccountManager:
             params = {
                 "CANO": cano,
                 "ACNT_PRDT_CD": acnt_prdt_cd,
-                "PDNO": "",  # 특정 종목이 아닌 전체 계좌의 주문 가능 금액을 조회
-                "ORD_DVSN": "01", # 01: 시장가
-                "ORD_UNPR": "0",  # 시장가 주문 시 가격은 0
-                "ORD_QTY": "0",   # 필수 파라미터. 전체 조회 시 0으로 설정.
+                "PDNO": "",
+                "ORD_DVSN": "01",
+                "ORD_UNPR": "0",
+                "ORD_QTY": "0",
                 "CMA_EVLU_AMT_ICLD_YN": "N",
                 "OVRS_ICLD_YN": "N"
             }
             data = self.api.request("get_balance", params=params)
             if data and data.get("rt_cd") == "0":
                 output_data = data.get("output", {})
-                # '미수없는매수가능금액'을 사용. '주문가능현금'은 D+2 예수금을 포함하지 않을 수 있음.
                 available_cash = int(output_data.get("nrcvb_buy_amt", 0))
-                msg = data.get('msg1', 'OK') # 응답 메시지 추출
-                # logger.info(f"✅ [BALANCE] 잔고 조회 성공: {available_cash:,.0f}원 (응답: {msg})")
                 return available_cash
-            else:
-                # 실패 시 응답 내용 로깅 강화
-                # logger.warning(f"❌ [BALANCE] 잔고 조회 응답 실패. 응답: {data}")
-                return 0
-        except Exception as e:
-            # logger.error(f"❌ [BALANCE] 간단 잔고 조회 중 예외 발생: {e}", exc_info=True)
+            return 0
+        except Exception:
             return 0
 
     def get_current_positions(self) -> List[Dict]:
-        """현재 보유 종목 조회 (v2: 필수 파라미터 추가)"""
+        """현재 보유 종목 조회"""
         try:
             cano, acnt_prdt_cd = self._get_account_parts()
             params = {
@@ -83,82 +84,142 @@ class KISAccountManager:
                 "CANO": cano,
                 "ACNT_PRDT_CD": acnt_prdt_cd,
                 "PDNO": stock_code.lstrip('A').zfill(6),
-                "ORD_DVSN": order_type, # 00: 지정가, 01: 시장가
+                "ORD_DVSN": order_type,
                 "ORD_QTY": str(int(quantity)),
-                "ORD_UNPR": str(int(price)) # float -> int -> str 변환으로 소수점 제거
+                "ORD_UNPR": str(int(price))
             }
             headers = {"tr_id": tr_id}
-
             data = self.api.request("order_cash", body=body, headers=headers)
-            
             success = data and data.get("rt_cd") == "0"
             return {
                 "success": success,
                 "error": (data.get("msg1") if (data and not success) else ""),
-                "order_no": (data.get("output", {}).get("ODNO", "") if data else ""),
+                "order_id": (data.get("output", {}).get("ODNO", "") if data else ""),
                 "full_response": (data or {})
             }
         except Exception as e:
             logger.error(f"❌ [ORDER] 주문 실행 오류: {e}")
-            return {"success": False, "error": str(e)}
+            return {"success": False, "error": str(e), "order_id": ""}
 
-    def place_buy_order(self, stock_code: str, quantity: int, price: int) -> Dict:
-        # NOTE: 현재 미사용 (향후 지정가 주문 필요시 사용)
-        logger.info(f"📈 [BUY] 지정가 매수 주문: {stock_code} {quantity}주 @{price:,}원")
-        return self._place_order("TTTC0012U", stock_code, quantity, price, "00")
-
-    def place_sell_order(self, stock_code: str, quantity: int, price: int) -> Dict:
-        # NOTE: 현재 미사용 (향후 지정가 주문 필요시 사용)
-        logger.info(f"📉 [SELL] 지정가 매도 주문: {stock_code} {quantity}주 @{price:,}원")
-        return self._place_order("TTTC0011U", stock_code, quantity, price, "00")
+    def place_limit_buy_order(self, stock_code: str, quantity: int, price: int) -> Dict:
+        logger.info(f"📈 [BUY-LIMIT] 지정가 매수 주문: {stock_code} {quantity}주 @{price:,}원")
+        return self._place_order("TTTC0802U", stock_code, quantity, price, "00")
 
     def place_sell_order_market(self, stock_code: str, quantity: int) -> Dict:
-        logger.info(f"📉 [SELL_MARKET] 시장가 매도 주문: {stock_code} {quantity}주")
+        logger.info(f"📉 [SELL-MARKET] 시장가 매도 주문: {stock_code} {quantity}주")
         return self._place_order("TTTC0801U", stock_code, quantity, 0, "01")
 
     def place_buy_order_market(self, stock_code: str, quantity: int) -> Dict:
-        logger.info(f"📈 [BUY_MARKET] 시장가 매수 주문: {stock_code} {quantity}주")
+        logger.info(f"📈 [BUY-MARKET] 시장가 매수 주문: {stock_code} {quantity}주")
         return self._place_order("TTTC0802U", stock_code, quantity, 0, "01")
+
+    def get_filled_qty(self, order_id: str) -> int:
+        """주문 ID로 체결 수량을 조회합니다."""
+        try:
+            details = self.api.get_order_details(order_id)
+            if details:
+                return int(details.get('tot_ccld_qty', 0))
+            return 0
+        except Exception as e:
+            logger.error(f"[FILLED_QTY] {order_id} 체결 수량 조회 오류: {e}")
+            return 0
+
+    def cancel_order(self, order_id: str) -> bool:
+        """주문 ID로 주문을 취소합니다."""
+        try:
+            order_details = self.api.get_order_details(order_id)
+            if not order_details:
+                logger.warning(f"[CANCEL] 취소할 주문({order_id}) 정보를 찾을 수 없습니다.")
+                return False
+            result = self.api.cancel_order(order_details)
+            if result and result.get("rt_cd") == "0":
+                logger.info(f"[CANCEL] 주문 취소 성공: {order_id}")
+                return True
+            else:
+                logger.error(f"[CANCEL] 주문 취소 실패: {order_id}, 응답: {result}")
+                return False
+        except Exception as e:
+            logger.error(f"[CANCEL] {order_id} 주문 취소 중 오류: {e}")
+            return False
+
+    def place_buy_with_limit_then_market(
+        self,
+        stock_code: str,
+        quantity: int,
+        limit_price: float,
+        check_wait_sec: float = 1.5,
+        max_wait_sec: float = 3.0,
+        poll_interval: float = 0.2,
+    ) -> OrderResult:
+        # 1) 지정가 1회 시도
+        limit_res = self.place_limit_buy_order(stock_code, quantity, int(limit_price))
+        if not limit_res.get('success') or not limit_res.get('order_id'):
+            logger.warning(f"[LTM-BUY] {stock_code} 지정가 주문 실패, 즉시 시장가로 전환.")
+            market_res = self.place_buy_order_market(stock_code, quantity)
+            return OrderResult(market_res.get('success'), market_res.get('order_id'), 0, "LIMIT_FAIL_TO_MARKET")
+
+        order_id = limit_res['order_id']
+        start = time.time()
+
+        # 2) 짧은 시간 동안 체결 확인
+        while time.time() - start < check_wait_sec:
+            filled = self.get_filled_qty(order_id)
+            if filled >= quantity:
+                return OrderResult(True, order_id, filled, "LIMIT_FILLED_FAST")
+            time.sleep(poll_interval)
+
+        # 3) 추가 대기
+        while time.time() - start < max_wait_sec:
+            filled = self.get_filled_qty(order_id)
+            if filled >= quantity:
+                return OrderResult(True, order_id, filled, "LIMIT_FILLED_SLOW")
+            time.sleep(poll_interval)
+
+        # 4) 부분 체결 또는 미체결 처리
+        filled = self.get_filled_qty(order_id)
+        remaining = max(0, quantity - filled)
+
+        try:
+            self.cancel_order(order_id)
+        except Exception as e:
+            logger.error(f"[LTM-BUY] {order_id} 지정가 주문 취소 실패: {e}")
+
+        if remaining > 0:
+            logger.info(f"[LTM-BUY] {stock_code} 지정가 미체결(잔량:{remaining}), 시장가로 전환.")
+            market_res = self.place_buy_order_market(stock_code, remaining)
+            # 시장가 주문 후 체결량 확인 로직은 복잡성을 가중시키므로, 여기서는 API 응답을 신뢰함
+            return OrderResult(market_res.get('success'), market_res.get('order_id'), filled, "PARTIAL_TO_MARKET")
+        else:
+            return OrderResult(True, order_id, filled, "LIMIT_FILLED_BEFORE_CANCEL")
 
     def get_volume_ranking(self, count: int = 20) -> List[Dict]:
         """거래량 순위 조회 (v2: 데이터 파싱 로직 복원)"""
         try:
             logger.info(f"📊 [VOLUME] 거래량 순위 조회 시작 (상위 {count}개)")
-            
-            # NOTE: FID_TRGT_EXLS_CLS_CODE는 주요 제외 조건을 설정하는 중요한 파라미터입니다.
-            # 현재 "100001011"로 설정되어 관리종목, 거래정지, 우선주, ETF/ETN을 제외합니다.
-            # 이 값은 필요에 따라 설정 파일 등으로 관리하여 유연하게 변경할 수 있습니다.
             params = {
-                "FID_COND_MRKT_DIV_CODE": "J",          # J: 전체 (코스피+코스닥)
-                "FID_COND_SCR_DIV_CODE": "20171",       # 조건 화면 분류 코드
-                "FID_INPUT_ISCD": "0000",               # 입력 종목 코드 (전체)
-                "FID_DIV_CLS_CODE": "0",                # 구분 분류 코드 (0: 전체)
-                "FID_BLNG_CLS_CODE": "0",               # 소속 분류 코드 (0: 전체)
-                "FID_TRGT_CLS_CODE": "111111111",       # 대상 구분 (전부 포함)
-                # 제외 대상 구분 (9자리 문자열, 1로 설정 시 제외)
-                # 1: 관리종목, 2: 투자경고/위험, 3: 투자주의, 4: 불성실공시, 5: 단기과열
-                # 6: 거래정지, 7: 정리매매, 8: 우선주, 9: ETF/ETN
-                "FID_TRGT_EXLS_CLS_CODE": "100001011", # 관리종목, 거래정지, 우선주, ETF/ETN 제외
-                "FID_INPUT_PRICE_1": "",                # 가격 조건 (없음)
-                "FID_INPUT_PRICE_2": "",                # 가격 조건 (없음)
-                "FID_VOL_CNT": "",                      # 거래량 조건 (없음)
-                "FID_INPUT_DATE_1": ""                  # 날짜 조건 (없음)
+                "FID_COND_MRKT_DIV_CODE": "J",
+                "FID_COND_SCR_DIV_CODE": "20171",
+                "FID_INPUT_ISCD": "0000",
+                "FID_DIV_CLS_CODE": "0",
+                "FID_BLNG_CLS_CODE": "0",
+                "FID_TRGT_CLS_CODE": "111111111",
+                "FID_TRGT_EXLS_CLS_CODE": "100001011",
+                "FID_INPUT_PRICE_1": "",
+                "FID_INPUT_PRICE_2": "",
+                "FID_VOL_CNT": "",
+                "FID_INPUT_DATE_1": ""
             }
             data = self.api.request("volume_rank", params=params)
-            
             if not (data and data.get("rt_cd") == "0"):
                 return []
-
             volume_stocks = []
             for i, stock in enumerate(data.get("output", [])[:count]):
                 try:
                     stock_code = stock.get('mksc_shrn_iscd', '').zfill(6)
                     stock_name = stock.get('hts_kor_isnm', '')
                     current_price = int(stock.get('stck_prpr', 0) or 0)
-                    
                     if not (stock_code and stock_name and current_price > 0):
                         continue
-
                     stock_info = {
                         'code': stock_code,
                         'name': stock_name,
@@ -172,10 +233,8 @@ class KISAccountManager:
                 except (ValueError, TypeError) as e:
                     logger.warning(f"⚠️ [VOLUME] 종목 데이터 파싱 실패: {stock.get('hts_kor_isnm', 'Unknown')} - {e}")
                     continue
-            
             logger.info(f"✅ [VOLUME] 거래량 순위 {len(volume_stocks)}개 파싱 완료")
             return volume_stocks
-
         except Exception as e:
             logger.error(f"❌ [VOLUME] 거래량 순위 조회 오류: {e}")
             return []
@@ -198,15 +257,11 @@ class KISAccountManager:
     def get_total_assets(self) -> int:
         """현재 총 자산(현금 + 주식 평가액)을 API를 통해 직접 조회합니다."""
         try:
-            # logger.info("💰 [ASSETS] 총 자산 조회를 시작합니다...")
             cash_balance = self.get_simple_balance()
             positions = self.get_current_positions()
-            
             stock_eval_balance = 0
             if positions:
                 stock_eval_balance = sum(int(p.get('evlu_amt', 0)) for p in positions)
-                # logger.info(f"✅ [ASSETS] 주식 평가액: {stock_eval_balance:,.0f}원 ({len(positions)} 종목)")
-            
             total_assets = cash_balance + stock_eval_balance
             logger.info(f"✅ [ASSETS] API 조회 총 자산: {total_assets:,.0f}원 (현금: {cash_balance:,.0f}원 + 주식: {stock_eval_balance:,.0f}원)")
             return total_assets
