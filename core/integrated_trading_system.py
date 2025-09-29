@@ -40,6 +40,7 @@ class IntegratedTradingSystem:
         self.closing_price_candidates: List[Dict] = []
         self.swing_candidates: Dict[str, Dict] = {}
         self.last_news_timestamp: Dict[str, datetime] = {}
+        self._news_cache: Dict = {}
         self.sell_worker_done_today = False
         self.buy_worker_done_today = False
         
@@ -259,6 +260,37 @@ class IntegratedTradingSystem:
         else:
             logger.error(f"[SELL] 매도 주문 실패: {position['name']} ({code})")
 
+    def _normalize_stock(self, rec: Dict) -> Dict:
+        """KIS API 응답을 내부 표준 형식으로 정규화합니다."""
+        name = rec.get("name") or rec.get("stock_name") or rec.get("hts_kor_isnm") or ""
+        code = rec.get("code") or rec.get("symbol") or rec.get("mksc_shrn_iscd") or rec.get("srtn_cd") or ""
+        rank = rec.get("volume_rank") or rec.get("rank") or rec.get("stck_ranking") or None
+        return {"name": name, "code": code, "volume_rank": rank, **rec}
+
+    def _cached_news(self, name: str, ttl_sec: int = 300) -> Optional[Dict]:
+        """캐시를 통해 종목의 최신 뉴스를 조회합니다."""
+        now = time.time()
+        hit = self._news_cache.get(name)
+        if hit and now - hit[0] < ttl_sec:
+            return hit[1]
+        
+        if not news_fetcher:
+            return None
+            
+        item = news_fetcher.search_latest_news(name)
+        self._news_cache[name] = (now, item or {})
+        return item
+
+    def _append_news_line(self, lines: List[str], stock: Dict):
+        """후보 종목 메시지에 뉴스 라인을 추가합니다."""
+        try:
+            n = self._cached_news(stock["name"])
+            if n and n.get("title"):
+                ts = n.get("timestamp", "")
+                lines.append(f"    · 📰 {ts} {n['title']}  {n['link']}")
+        except Exception as e:
+            logger.warning(f"[NEWS] fetch fail {stock.get('code')}: {e}")
+
     def _closing_price_screening_worker(self):
         """장중 후보군 스크리닝 (09:30 ~ 15:20)"""
         while not self.shutdown_event.is_set():
@@ -267,11 +299,17 @@ class IntegratedTradingSystem:
                 if self._is_screening_time(now):
                     logger.info("[SCREENER] 종가/스윙 후보군 스크리닝 시작...")
                     
-                    volume_stocks = self.account_manager.get_volume_ranking(count=100)
-                    logger.info(f"[SCREENER] volume_top100={len(volume_stocks)}")
-
+                    raw_volume_stocks = self.account_manager.get_volume_ranking(count=100)
+                    volume_stocks = [self._normalize_stock(r) for r in raw_volume_stocks]
+                    
+                    # 0) 빠른 확인 로그
+                    logger.info(f"[CHK] volume_top100_len={len(volume_stocks)} sample_keys={list(volume_stocks[0].keys()) if volume_stocks else 'EMPTY'}")
+                    
                     swing_candidates_list = get_swing_candidates(volume_stocks, self.config, self.market_cache)
                     self.swing_candidates = {s['code']: s for s in swing_candidates_list}
+                    
+                    logger.info(f"[CHK] swing_candidates_len(after_filter)={len(self.swing_candidates)}")
+                    logger.info(f"[CHK] news_fetcher_active={bool(news_fetcher)}")
 
                     self.closing_price_candidates = closing_price_stock_filter(
                         self.market_cache, volume_stocks, self.account_manager.api
@@ -299,22 +337,37 @@ class IntegratedTradingSystem:
                     if self.closing_price_candidates or self.swing_candidates:
                         top_n = 5
                         message_lines = ["*🔔 종가/스윙 후보 업데이트*"]
-                        message_lines.append("\n*📈 종가매매 후보*")
-                        if self.closing_price_candidates:
-                            for i, stock in enumerate(self.closing_price_candidates[:top_n]):
-                                score_display = f"점수: {stock.get('total_score', 0):.1f}"
-                                line = f"{i+1}. {stock['name']} ({stock['code']}) - {score_display}"
-                                message_lines.append(line)
-                        else:
-                            message_lines.append("- 후보 없음")
+                        
+                        # 종가 후보 생성 (try-except)
+                        try:
+                            closing_lines = ["\n*📈 종가매매 후보*"]
+                            if self.closing_price_candidates:
+                                for i, stock in enumerate(self.closing_price_candidates[:top_n]):
+                                    score_display = f"점수: {stock.get('total_score', 0):.1f}"
+                                    line = f"{i+1}. {stock['name']} ({stock['code']}) - {score_display}"
+                                    closing_lines.append(line)
+                                    self._append_news_line(closing_lines, stock)
+                            else:
+                                closing_lines.append("- 후보 없음")
+                            message_lines.extend(closing_lines)
+                        except Exception as e:
+                            logger.exception("[MSG] 종가 후보 메시지 생성 실패", exc_info=e)
+                            message_lines.append("\n*📈 종가매매 후보*\n- (생성 오류)")
 
-                        message_lines.append("\n*🪝 스윙 후보 (모니터링)*")
-                        if self.swing_candidates:
-                            for i, stock in enumerate(list(self.swing_candidates.values())[:top_n]):
-                                line = f"{i+1}. {stock['name']} ({stock['code']}) (거래량순위: {stock.get('volume_rank', 'N/A')})"
-                                message_lines.append(line)
-                        else:
-                            message_lines.append("- 후보 없음")
+                        # 스윙 후보 생성 (try-except)
+                        try:
+                            swing_lines = ["\n*🪝 스윙 후보 (모니터링)*"]
+                            if self.swing_candidates:
+                                for i, stock in enumerate(list(self.swing_candidates.values())[:top_n]):
+                                    line = f"{i+1}. {stock['name']} ({stock['code']}) (거래량순위: {stock.get('volume_rank', 'N/A')})"
+                                    swing_lines.append(line)
+                                    self._append_news_line(swing_lines, stock)
+                            else:
+                                swing_lines.append("- 후보 없음")
+                            message_lines.extend(swing_lines)
+                        except Exception as e:
+                            logger.exception("[MSG] 스윙 후보 메시지 생성 실패", exc_info=e)
+                            message_lines.append("\n*🪝 스윙 후보 (모니터링)*\n- (생성 오류)")
 
                         full_message = "\n".join(message_lines)
                         logger.info(full_message)
