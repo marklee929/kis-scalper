@@ -70,7 +70,7 @@ def get_swing_candidates(volume_stocks: List[Dict], config_obj: dict, market_cac
         # 하락 추세 필터링
         try:
             ohlcv_5m = market_cache.get_candles(code, interval=5)
-            if not ohlcv_5m or len(ohlcv_5m) < 20:
+            if not ohlcv_5m or len(ohlcv_5m) < 10: # 20 -> 10
                 continue
             
             close_prices = [c['close'] for c in ohlcv_5m]
