@@ -6865,35 +6865,35 @@
     "006800": {
       "price_group": "p_10k_50k",
       "turnover_tier": "v_high",
-      "time": "2025-09-29T11:31:22.929577",
-      "price": 22150.0,
+      "time": "2025-09-29T11:31:57.428663",
+      "price": 22200.0,
       "high": 22650.0,
       "low": 21250.0,
       "exec_vol": 4.0,
-      "acc_vol": 4307996.0,
-      "change_rate": 7.52
+      "acc_vol": 4310802.0,
+      "change_rate": 7.77
     },
     "003530": {
       "price_group": "p_5k_10k",
       "turnover_tier": "v_high",
-      "time": "2025-09-29T11:31:20.227686",
-      "price": 6090.0,
+      "time": "2025-09-29T11:31:59.566112",
+      "price": 6100.0,
       "high": 6140.0,
       "low": 5440.0,
-      "exec_vol": 40.0,
-      "acc_vol": 8884971.0,
-      "change_rate": 15.12
+      "exec_vol": 10.0,
+      "acc_vol": 8897726.0,
+      "change_rate": 15.31
     },
     "005930": {
       "price_group": "p_over_50k",
       "turnover_tier": "v_high",
-      "time": "2025-09-29T11:31:22.513058",
-      "price": 84550.0,
+      "time": "2025-09-29T11:31:57.843512",
+      "price": 84500.0,
       "high": 85000.0,
       "low": 83200.0,
-      "exec_vol": 30.0,
-      "acc_vol": 7102214.0,
-      "change_rate": 1.5
+      "exec_vol": 14.0,
+      "acc_vol": 7104962.0,
+      "change_rate": 1.44
     },
     "064260": {
       "price_group": "p_10k_50k",
@@ -6905,6 +6905,444 @@
       "exec_vol": 156.0,
       "acc_vol": 8528165.0,
       "change_rate": 0.95
+    }
+  },
+  "09291132": {
+    "006800": {
+      "price_group": "p_10k_50k",
+      "turnover_tier": "v_high",
+      "time": "2025-09-29T11:32:57.520408",
+      "price": 22250.0,
+      "high": 22650.0,
+      "low": 21250.0,
+      "exec_vol": 1.0,
+      "acc_vol": 4316030.0,
+      "change_rate": 8.01
+    },
+    "005930": {
+      "price_group": "p_over_50k",
+      "turnover_tier": "v_high",
+      "time": "2025-09-29T11:32:57.933738",
+      "price": 84650.0,
+      "high": 85000.0,
+      "low": 83200.0,
+      "exec_vol": 57.0,
+      "acc_vol": 7153669.0,
+      "change_rate": 1.62
+    },
+    "003530": {
+      "price_group": "p_5k_10k",
+      "turnover_tier": "v_high",
+      "time": "2025-09-29T11:32:53.404010",
+      "price": 6110.0,
+      "high": 6140.0,
+      "low": 5440.0,
+      "exec_vol": 140.0,
+      "acc_vol": 8926926.0,
+      "change_rate": 15.5
+    },
+    "064260": {
+      "price_group": "p_10k_50k",
+      "turnover_tier": "v_high",
+      "time": "2025-09-29T11:32:58.143015",
+      "price": 10625.0,
+      "high": 11140.0,
+      "low": 10540.0,
+      "exec_vol": 1.0,
+      "acc_vol": 8547209.0,
+      "change_rate": 0.81
+    }
+  },
+  "09291133": {
+    "005930": {
+      "price_group": "p_over_50k",
+      "turnover_tier": "v_high",
+      "time": "2025-09-29T11:33:58.633338",
+      "price": 84600.0,
+      "high": 85000.0,
+      "low": 83200.0,
+      "exec_vol": 15.0,
+      "acc_vol": 7173776.0,
+      "change_rate": 1.56
+    },
+    "006800": {
+      "price_group": "p_10k_50k",
+      "turnover_tier": "v_high",
+      "time": "2025-09-29T11:33:56.348001",
+      "price": 22200.0,
+      "high": 22650.0,
+      "low": 21250.0,
+      "exec_vol": 87.0,
+      "acc_vol": 4346038.0,
+      "change_rate": 7.77
+    },
+    "003530": {
+      "price_group": "p_5k_10k",
+      "turnover_tier": "v_high",
+      "time": "2025-09-29T11:33:56.199974",
+      "price": 6080.0,
+      "high": 6140.0,
+      "low": 5440.0,
+      "exec_vol": 1.0,
+      "acc_vol": 8952924.0,
+      "change_rate": 14.93
+    },
+    "064260": {
+      "price_group": "p_10k_50k",
+      "turnover_tier": "v_high",
+      "time": "2025-09-29T11:33:25.838857",
+      "price": 10620.0,
+      "high": 11140.0,
+      "low": 10540.0,
+      "exec_vol": 42.0,
+      "acc_vol": 8551843.0,
+      "change_rate": 0.76
+    }
+  },
+  "09291134": {
+    "003530": {
+      "price_group": "p_5k_10k",
+      "turnover_tier": "v_high",
+      "time": "2025-09-29T11:34:47.038401",
+      "price": 6080.0,
+      "high": 6140.0,
+      "low": 5440.0,
+      "exec_vol": 46.0,
+      "acc_vol": 8960918.0,
+      "change_rate": 14.93
+    },
+    "006800": {
+      "price_group": "p_10k_50k",
+      "turnover_tier": "v_high",
+      "time": "2025-09-29T11:34:54.524886",
+      "price": 22200.0,
+      "high": 22650.0,
+      "low": 21250.0,
+      "exec_vol": 77.0,
+      "acc_vol": 4351949.0,
+      "change_rate": 7.77
+    },
+    "064260": {
+      "price_group": "p_10k_50k",
+      "turnover_tier": "v_high",
+      "time": "2025-09-29T11:34:38.935074",
+      "price": 10625.0,
+      "high": 11140.0,
+      "low": 10540.0,
+      "exec_vol": 5.0,
+      "acc_vol": 8562262.0,
+      "change_rate": 0.81
+    },
+    "005930": {
+      "price_group": "p_over_50k",
+      "turnover_tier": "v_high",
+      "time": "2025-09-29T11:34:55.989940",
+      "price": 84550.0,
+      "high": 85000.0,
+      "low": 83200.0,
+      "exec_vol": 5.0,
+      "acc_vol": 7177798.0,
+      "change_rate": 1.5
+    }
+  },
+  "09291135": {
+    "006800": {
+      "price_group": "p_10k_50k",
+      "turnover_tier": "v_high",
+      "time": "2025-09-29T11:35:59.962926",
+      "price": 22250.0,
+      "high": 22650.0,
+      "low": 21250.0,
+      "exec_vol": 3.0,
+      "acc_vol": 4361005.0,
+      "change_rate": 8.01
+    },
+    "005930": {
+      "price_group": "p_over_50k",
+      "turnover_tier": "v_high",
+      "time": "2025-09-29T11:35:59.900928",
+      "price": 84600.0,
+      "high": 85000.0,
+      "low": 83200.0,
+      "exec_vol": 2.0,
+      "acc_vol": 7185548.0,
+      "change_rate": 1.56
+    },
+    "064260": {
+      "price_group": "p_10k_50k",
+      "turnover_tier": "v_high",
+      "time": "2025-09-29T11:35:52.875194",
+      "price": 10620.0,
+      "high": 11140.0,
+      "low": 10540.0,
+      "exec_vol": 30.0,
+      "acc_vol": 8567106.0,
+      "change_rate": 0.76
+    },
+    "003530": {
+      "price_group": "p_5k_10k",
+      "turnover_tier": "v_high",
+      "time": "2025-09-29T11:35:40.326933",
+      "price": 6080.0,
+      "high": 6140.0,
+      "low": 5440.0,
+      "exec_vol": 171.0,
+      "acc_vol": 8966659.0,
+      "change_rate": 14.93
+    }
+  },
+  "09291136": {
+    "005930": {
+      "price_group": "p_over_50k",
+      "turnover_tier": "v_high",
+      "time": "2025-09-29T11:36:55.112827",
+      "price": 84650.0,
+      "high": 85000.0,
+      "low": 83200.0,
+      "exec_vol": 71.0,
+      "acc_vol": 7213331.0,
+      "change_rate": 1.62
+    },
+    "006800": {
+      "price_group": "p_10k_50k",
+      "turnover_tier": "v_high",
+      "time": "2025-09-29T11:36:57.813899",
+      "price": 22250.0,
+      "high": 22650.0,
+      "low": 21250.0,
+      "exec_vol": 3.0,
+      "acc_vol": 4365748.0,
+      "change_rate": 8.01
+    },
+    "064260": {
+      "price_group": "p_10k_50k",
+      "turnover_tier": "v_high",
+      "time": "2025-09-29T11:36:12.839045",
+      "price": 10620.0,
+      "high": 11140.0,
+      "low": 10540.0,
+      "exec_vol": 30.0,
+      "acc_vol": 8568116.0,
+      "change_rate": 0.76
+    },
+    "003530": {
+      "price_group": "p_5k_10k",
+      "turnover_tier": "v_high",
+      "time": "2025-09-29T11:36:55.741225",
+      "price": 6090.0,
+      "high": 6140.0,
+      "low": 5440.0,
+      "exec_vol": 42.0,
+      "acc_vol": 8976660.0,
+      "change_rate": 15.12
+    }
+  },
+  "09291137": {
+    "005930": {
+      "price_group": "p_over_50k",
+      "turnover_tier": "v_high",
+      "time": "2025-09-29T11:37:58.938566",
+      "price": 84700.0,
+      "high": 85000.0,
+      "low": 83200.0,
+      "exec_vol": 7.0,
+      "acc_vol": 7219397.0,
+      "change_rate": 1.68
+    },
+    "006800": {
+      "price_group": "p_10k_50k",
+      "turnover_tier": "v_high",
+      "time": "2025-09-29T11:37:54.792518",
+      "price": 22250.0,
+      "high": 22650.0,
+      "low": 21250.0,
+      "exec_vol": 393.0,
+      "acc_vol": 4369174.0,
+      "change_rate": 8.01
+    },
+    "003530": {
+      "price_group": "p_5k_10k",
+      "turnover_tier": "v_high",
+      "time": "2025-09-29T11:37:39.326913",
+      "price": 6090.0,
+      "high": 6140.0,
+      "low": 5440.0,
+      "exec_vol": 990.0,
+      "acc_vol": 8983440.0,
+      "change_rate": 15.12
+    }
+  },
+  "09291138": {
+    "005930": {
+      "price_group": "p_over_50k",
+      "turnover_tier": "v_high",
+      "time": "2025-09-29T11:38:59.829912",
+      "price": 84600.0,
+      "high": 85000.0,
+      "low": 83200.0,
+      "exec_vol": 14.0,
+      "acc_vol": 7226321.0,
+      "change_rate": 1.56
+    },
+    "064260": {
+      "price_group": "p_10k_50k",
+      "turnover_tier": "v_high",
+      "time": "2025-09-29T11:38:25.443101",
+      "price": 10600.0,
+      "high": 11140.0,
+      "low": 10540.0,
+      "exec_vol": 75.0,
+      "acc_vol": 8614408.0,
+      "change_rate": 0.57
+    },
+    "003530": {
+      "price_group": "p_5k_10k",
+      "turnover_tier": "v_high",
+      "time": "2025-09-29T11:38:39.579765",
+      "price": 6090.0,
+      "high": 6140.0,
+      "low": 5440.0,
+      "exec_vol": 639.0,
+      "acc_vol": 8992852.0,
+      "change_rate": 15.12
+    },
+    "006800": {
+      "price_group": "p_10k_50k",
+      "turnover_tier": "v_high",
+      "time": "2025-09-29T11:38:58.372678",
+      "price": 22300.0,
+      "high": 22650.0,
+      "low": 21250.0,
+      "exec_vol": 86.0,
+      "acc_vol": 4382219.0,
+      "change_rate": 8.25
+    }
+  },
+  "09291139": {
+    "006800": {
+      "price_group": "p_10k_50k",
+      "turnover_tier": "v_high",
+      "time": "2025-09-29T11:39:54.585714",
+      "price": 22350.0,
+      "high": 22650.0,
+      "low": 21250.0,
+      "exec_vol": 18.0,
+      "acc_vol": 4394998.0,
+      "change_rate": 8.5
+    },
+    "005930": {
+      "price_group": "p_over_50k",
+      "turnover_tier": "v_high",
+      "time": "2025-09-29T11:39:53.131211",
+      "price": 84650.0,
+      "high": 85000.0,
+      "low": 83200.0,
+      "exec_vol": 3.0,
+      "acc_vol": 7230265.0,
+      "change_rate": 1.62
+    },
+    "064260": {
+      "price_group": "p_10k_50k",
+      "turnover_tier": "v_high",
+      "time": "2025-09-29T11:39:46.749540",
+      "price": 10610.0,
+      "high": 11140.0,
+      "low": 10540.0,
+      "exec_vol": 47.0,
+      "acc_vol": 8631295.0,
+      "change_rate": 0.66
+    },
+    "003530": {
+      "price_group": "p_5k_10k",
+      "turnover_tier": "v_high",
+      "time": "2025-09-29T11:39:04.182738",
+      "price": 6080.0,
+      "high": 6140.0,
+      "low": 5440.0,
+      "exec_vol": 2720.0,
+      "acc_vol": 8996642.0,
+      "change_rate": 14.93
+    }
+  },
+  "09291140": {
+    "006800": {
+      "price_group": "p_10k_50k",
+      "turnover_tier": "v_high",
+      "time": "2025-09-29T11:40:57.623572",
+      "price": 22350.0,
+      "high": 22650.0,
+      "low": 21250.0,
+      "exec_vol": 1.0,
+      "acc_vol": 4409577.0,
+      "change_rate": 8.5
+    },
+    "005930": {
+      "price_group": "p_over_50k",
+      "turnover_tier": "v_high",
+      "time": "2025-09-29T11:40:59.700370",
+      "price": 84700.0,
+      "high": 85000.0,
+      "low": 83200.0,
+      "exec_vol": 13.0,
+      "acc_vol": 7240234.0,
+      "change_rate": 1.68
+    },
+    "064260": {
+      "price_group": "p_10k_50k",
+      "turnover_tier": "v_high",
+      "time": "2025-09-29T11:40:54.978271",
+      "price": 10600.0,
+      "high": 11140.0,
+      "low": 10540.0,
+      "exec_vol": 23.0,
+      "acc_vol": 8691521.0,
+      "change_rate": 0.57
+    },
+    "003530": {
+      "price_group": "p_5k_10k",
+      "turnover_tier": "v_high",
+      "time": "2025-09-29T11:40:19.484880",
+      "price": 6090.0,
+      "high": 6140.0,
+      "low": 5440.0,
+      "exec_vol": 640.0,
+      "acc_vol": 9003427.0,
+      "change_rate": 15.12
+    }
+  },
+  "09291141": {
+    "006800": {
+      "price_group": "p_10k_50k",
+      "turnover_tier": "v_high",
+      "time": "2025-09-29T11:41:19.674225",
+      "price": 22350.0,
+      "high": 22650.0,
+      "low": 21250.0,
+      "exec_vol": 1.0,
+      "acc_vol": 4410764.0,
+      "change_rate": 8.5
+    },
+    "005930": {
+      "price_group": "p_over_50k",
+      "turnover_tier": "v_high",
+      "time": "2025-09-29T11:41:19.616564",
+      "price": 84700.0,
+      "high": 85000.0,
+      "low": 83200.0,
+      "exec_vol": 1.0,
+      "acc_vol": 7241972.0,
+      "change_rate": 1.68
+    },
+    "064260": {
+      "price_group": "p_10k_50k",
+      "turnover_tier": "v_high",
+      "time": "2025-09-29T11:41:14.851197",
+      "price": 10590.0,
+      "high": 11140.0,
+      "low": 10540.0,
+      "exec_vol": 5.0,
+      "acc_vol": 8693785.0,
+      "change_rate": 0.47
     }
   }
 }
