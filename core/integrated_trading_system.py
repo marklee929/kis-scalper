@@ -136,7 +136,7 @@ class IntegratedTradingSystem:
         return dt_time(9, 30) <= now.time() < dt_time(15, 20)
 
     def _is_buy_time(self, now: datetime) -> bool:
-        return now.time() >= dt_time(15, 20) and now.time() < dt_time(15, 30)
+        return now.time() >= dt_time(15, 18) and now.time() < dt_time(15, 29)
 
     def _daily_reset_worker(self):
         while not self.shutdown_event.is_set():
@@ -244,20 +244,46 @@ class IntegratedTradingSystem:
     def _execute_sell(self, code: str, reason: str):
         if code not in self.positions_to_sell: return
 
-        position = self.positions_to_sell[code]
-        shares = int(position['shares'])
-        logger.info(f"[SELL] 매도 조건 충족: {position['name']} ({code}) - 사유: {reason}")
-        
-        result = self.account_manager.place_sell_order_market(code, shares)
+        pos = self.positions_to_sell[code]
+        req_shares = int(pos['shares'])
+        logger.info(f"[SELL] 매도 조건 충족: {pos['name']} ({code}) - 사유: {reason}, 요청수량: {req_shares}")
+
+        # 실시간 보유/가용수량 조회
+        try:
+            holdings = self.account_manager.get_current_positions()
+            avail = 0
+            for h in holdings:
+                if self._normalize_code(h.get('pdno')) == code:
+                    avail = int(h.get('ord_psbl_qty') or h.get('hldg_qty') or 0)
+                    logger.info(f"[SELL] {pos['name']} 실시간 가용수량 확인: {avail}주")
+                    break
+        except Exception as e:
+            logger.error(f"[SELL] {pos['name']} 가용수량 조회 실패: {e}", exc_info=True)
+            avail = 0 # 실패 시 매도 보류
+
+        sell_qty = max(0, min(req_shares, avail))
+        if sell_qty <= 0:
+            logger.warning(f"[SELL] {pos['name']} ({code}) 가용수량 0 (요청: {req_shares}) → 매도 스킵")
+            # 가용수량이 0이면 더 이상 매도 시도를 하지 않도록 목록에서 제거
+            del self.positions_to_sell[code]
+            return
+
+        if sell_qty < req_shares:
+            logger.warning(f"[SELL] {pos['name']} ({code}) 요청수량({req_shares})보다 가용수량({avail})이 적어 {sell_qty}주만 매도합니다.")
+
+        result = self.account_manager.place_sell_order_market(code, sell_qty)
         if result and result.get('success'):
-            current_price = self.market_cache.get_quote(code) or position.get('avg_price', 0)
+            current_price = self.market_cache.get_quote(code) or pos.get('price', 0)
             self.position_manager.close_position(
-                code=code, quantity=shares, price=current_price, reason=reason, name=position['name']
+                code=code, quantity=sell_qty, price=current_price, reason=reason, name=pos['name']
             )
-            logger.info(f"[SELL] 시장가 매도 주문 완료 및 포지션 종료: {position['name']} ({code}) {shares}주")
+            logger.info(f"[SELL] 시장가 매도 주문 완료 및 포지션 종료: {pos['name']} ({code}) {sell_qty}주")
             del self.positions_to_sell[code]
         else:
-            logger.error(f"[SELL] 매도 주문 실패: {position['name']} ({code})")
+            # 주문 실패 시, 상세 오류 메시지 로깅
+            error_msg = result.get('error', '알 수 없는 오류')
+            full_response = result.get('full_response', {})
+            logger.error(f"[SELL] 매도 주문 실패: {pos['name']} ({code}), 사유: {error_msg}, 응답: {full_response}")
 
     def _normalize_stock(self, rec: Dict) -> Dict:
         """KIS API 응답을 내부 표준 형식으로 정규화합니다."""
@@ -383,7 +409,7 @@ class IntegratedTradingSystem:
                 time.sleep(300)
 
     def _closing_price_buy_worker(self):
-        """종가 매수 로직 (15:20 ~ 15:30), 점수 기반 Softmax 가중 배분 및 Limit-then-Market 적용"""
+        """종가 매수 로직 (15:18 ~ 15:29), 점수 기반 Softmax 가중 배분 및 Limit-then-Market 적용"""
         while not self.shutdown_event.is_set():
             try:
                 now = datetime.now()
@@ -405,15 +431,15 @@ class IntegratedTradingSystem:
                         continue
 
                     logger.info("[BUY_WORKER] 매수 실행 직전, 최신 계좌 잔고를 조회합니다...")
-                    cash_balance = self.account_manager.get_simple_balance()
-                    logger.info(f"[BUY_WORKER] 조회된 주문 가능 현금: {cash_balance:,.0f}원")
+                    initial_cash_balance = self.account_manager.get_simple_balance()
+                    logger.info(f"[BUY_WORKER] 조회된 주문 가능 현금: {initial_cash_balance:,.0f}원")
 
-                    if cash_balance < 10000:
-                        logger.warning(f"[BUY_WORKER] 주문 가능 현금이 {cash_balance:,.0f}원으로 너무 적어 매수를 건너뜁니다.")
+                    if initial_cash_balance < 10000:
+                        logger.warning(f"[BUY_WORKER] 주문 가능 현금이 {initial_cash_balance:,.0f}원으로 너무 적어 매수를 건너뜁니다.")
                         self.buy_worker_done_today = True
                         continue
 
-                    logger.info(f"[BUY_WORKER] 총 {cash_balance:,.0f}원의 현금으로 가중치 기반 예산 분배를 시작합니다.")
+                    logger.info(f"[BUY_WORKER] 총 {initial_cash_balance:,.0f}원의 현금으로 가중치 기반 예산 분배를 시작합니다.")
 
                     scores = np.array([c.get('total_score', 0.0) for c in candidates], dtype=float)
                     scores[scores == 0] = 1.0
@@ -427,6 +453,7 @@ class IntegratedTradingSystem:
                     logger.info(f"[BUY_WORKER] 최종 {len(candidates)}개 종목 매수 시작. 점수: {scores}, 가중치: {np.round(weights, 2)}")
 
                     buy_names = []
+                    running_cash_balance = initial_cash_balance
                     for stock, weight in zip(candidates, weights):
                         code = stock['code']
                         name = stock['name']
@@ -436,7 +463,7 @@ class IntegratedTradingSystem:
                             notifier.send_message(f"⚠️ 매수 제외(ETF 필터): {name}")
                             continue
 
-                        budget_per_stock = cash_balance * weight
+                        budget_per_stock = initial_cash_balance * weight
                         
                         quote_info = self.market_cache.get_quote_full(code)
                         if not quote_info or not quote_info.get('ask_price', 0) > 0:
@@ -444,10 +471,16 @@ class IntegratedTradingSystem:
                             current_price = quote_info.get('price', 0) if quote_info else 0
                             if current_price > 0:
                                 shares = int(budget_per_stock // current_price)
+                                required_cash = shares * current_price
+                                if running_cash_balance < required_cash:
+                                    logger.warning(f"[BUY_WORKER] {name} ({code}) 필요금액({required_cash:,.0f})이 잔고({running_cash_balance:,.0f})를 초과하여 시장가 매수를 건너뜁니다.")
+                                    continue
+                                
                                 if shares > 0:
                                     result = self.account_manager.place_buy_order_market(code, shares)
                                     if result and result.get('success'):
                                         logger.info(f"[BUY] 시장가 매수 주문 성공: {name} ({code}) {shares}주")
+                                        running_cash_balance -= required_cash
                                         self.position_manager.add_position(code, shares, current_price, name)
                                         trade_summary.record_trade(
                                             code=code, name=name, action='BUY', quantity=shares, price=current_price,
@@ -461,6 +494,11 @@ class IntegratedTradingSystem:
 
                         if best_ask > 0:
                             shares = int(budget_per_stock // best_ask)
+                            required_cash = shares * best_ask
+                            if running_cash_balance < required_cash:
+                                logger.warning(f"[BUY_WORKER] {name} ({code}) 필요금액({required_cash:,.0f})이 잔고({running_cash_balance:,.0f})를 초과하여 LTM 매수를 건너뜁니다.")
+                                continue
+
                             if shares > 0:
                                 logger.info(f"[BUY_WORKER] {name} ({code}) {shares}주 매수 시도 (지정가: {best_ask})")
                                 result = self.account_manager.place_buy_with_limit_then_market(
@@ -470,6 +508,8 @@ class IntegratedTradingSystem:
                                 )
                                 
                                 if result.ok and result.filled_qty > 0:
+                                    filled_amount = result.filled_qty * best_ask # LTM이므로 지정가 기준으로 차감
+                                    running_cash_balance -= filled_amount
                                     logger.info(f"[BUY] LTM 매수 성공: {name} ({code}) {result.filled_qty}주. 메시지: {result.msg}")
                                     self.position_manager.add_position(code, result.filled_qty, best_ask, name)
                                     trade_summary.record_trade(
