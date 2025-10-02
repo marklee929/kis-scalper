@@ -285,12 +285,25 @@ class IntegratedTradingSystem:
             full_response = result.get('full_response', {})
             logger.error(f"[SELL] 매도 주문 실패: {pos['name']} ({code}), 사유: {error_msg}, 응답: {full_response}")
 
+    def _safe_int(self, value) -> int:
+        if isinstance(value, int):
+            return value
+        try:
+            # API가 쉼표를 포함한 문자열 숫자를 반환하는 경우 처리
+            return int(str(value).replace(',', ''))
+        except (ValueError, TypeError):
+            return 0
+
     def _normalize_stock(self, rec: Dict) -> Dict:
         """KIS API 응답을 내부 표준 형식으로 정규화합니다."""
         name = rec.get("name") or rec.get("stock_name") or rec.get("hts_kor_isnm") or ""
         code = rec.get("code") or rec.get("symbol") or rec.get("mksc_shrn_iscd") or rec.get("srtn_cd") or ""
         rank = rec.get("volume_rank") or rec.get("rank") or rec.get("stck_ranking") or None
-        return {"name": name, "code": code, "volume_rank": rank, **rec}
+        
+        # API 응답의 다양한 거래대금 필드를 'turnover'로 표준화 (누적거래대금)
+        turnover = rec.get("turnover") or rec.get("acml_tr_pbmn") or rec.get("acc_trdval") or 0
+
+        return {"name": name, "code": code, "volume_rank": rank, "turnover": self._safe_int(turnover), **rec}
 
 
 
@@ -325,20 +338,32 @@ class IntegratedTradingSystem:
                     )
 
                     if not self.closing_price_candidates and volume_stocks:
-                        logger.warning("[SCREENER] 종가매매 필터링 후보가 없어 거래량 상위 종목으로 Fallback합니다.")
-                        trading_config = self.config.get('trading', {})
-                        exclude_keywords = trading_config.get('exclude_keywords', [])
-                        fallback_candidates = []
-                        for stock in volume_stocks:
-                            stock_name = stock.get('name', '')
-                            if any(keyword.upper() in stock_name.upper() for keyword in exclude_keywords):
-                                continue
-                            fallback_candidates.append({
-                                'code': stock.get('code'), 'name': stock_name, 'turnover': stock.get('turnover', 0),
-                                'total_score': 0.0, 'scores': {}, 'reason': 'fallback_volume'
-                            })
-                            if len(fallback_candidates) >= 5: break
-                        self.closing_price_candidates = fallback_candidates
+                        logger.info("[SCREENER] 필터 0개 → Fallback 5개로 매수 대상 대체")
+                        
+                        def fallback_from_volume(volume_top: List[Dict], top_k: int) -> List[Dict]:
+                            """거래량 상위 목록에서 Fallback 후보를 생성합니다."""
+                            trading_config = self.config.get('trading', {})
+                            fallback_candidates = []
+                            for stock in volume_top:
+                                # is_etf_like를 사용하여 ETF 필터링
+                                if is_etf_like(stock.get('name', ''), stock.get('code', ''), trading_config):
+                                    continue
+                                
+                                # turnover가 0이 아닌 종목만 포함 (최소한의 데이터 품질 보장)
+                                if stock.get('turnover', 0) > 0:
+                                    fallback_candidates.append({
+                                        'code': stock.get('code'), 
+                                        'name': stock.get('name', ''), 
+                                        'turnover': stock.get('turnover', 0),
+                                        'total_score': 1.0,  # 0점 대신 1점으로 설정하여 가중치 계산 시 제외되지 않도록 함
+                                        'scores': {}, 
+                                        'reason': 'fallback_volume'
+                                    })
+                                if len(fallback_candidates) >= top_k:
+                                    break
+                            return fallback_candidates
+
+                        self.closing_price_candidates = fallback_from_volume(volume_stocks, top_k=5)
 
                     logger.info(f"[SCREENER] 종가매매 후보군 업데이트 완료: {len(self.closing_price_candidates)}개")
                     logger.info(f"[SCREENER] 스윙 후보군 업데이트 완료: {len(self.swing_candidates)}개")

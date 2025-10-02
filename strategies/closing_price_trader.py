@@ -64,7 +64,9 @@ def apply_all_filters(candidates: List[Dict], market_cache: MarketCache) -> List
             continue
 
         # 3. 최소 거래대금 필터
-        if turnover < min_turnover:
+        if turnover == 0:
+            logger.warning(f"[FILTER] turnover=0 (data missing) -> temporarily skip turnover check: {code} {name}")
+        elif turnover < min_turnover:
             logger.debug(f"[FILTER] {name}({code}) 제외: 거래대금 미달 ({turnover:,.0f} < {min_turnover:,.0f})")
             rejection_counts["turnover"] += 1
             continue
