@@ -33,7 +33,7 @@ secrets.json
 # Build / dist
 build/
 dist/
-secrets/
+config/
 secrets.json
 .env
 .env.*
@@ -46,3 +46,5 @@ logs/
 *.cer
 *.sqlite
 *.db
+
+config/secrets.json
