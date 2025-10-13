@@ -72,11 +72,10 @@ def scalping_stock_filter(market_cache: MarketCache, candidates: List[Dict], api
         logger.warning("[SCREENER] 점수화 결과가 비었습니다. 입력 후보/캐시/심볼 포맷 확인 필요.")
         return []
 
-    # 최소 안전조건: 유동성/거래대금/모멘텀 하한
+    # 최소 안전조건: 유동성/모멘텀 하한
     eligible = [
         s for s in scored
         if s.get('individual_scores', {}).get('liquidity', 0) >= 40
-        and s.get('individual_scores', {}).get('turnover', 0)  >= 60
         and s.get('individual_scores', {}).get('momentum', 0)   >= 40
     ]
 

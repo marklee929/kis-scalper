@@ -68,8 +68,8 @@ class Config:
                         "initial_data_wait_min": 10,
                         
                         # 종가매매 & 익일매도 전략 파라미터 (2025-09-18 업데이트)
-                        "min_turnover": int(secrets.get("MIN_TURNOVER", 10000000000)), # 100억으로 상향
-                        "max_spread_pct": float(secrets.get("MAX_SPREAD_PCT", 0.0015)),
+                        "min_turnover": int(secrets.get("MIN_TURNOVER", 1000000000)), # 10억으로 하향 조정
+                        "max_spread_pct": float(secrets.get("MAX_SPREAD_PCT", 0.0030)), # 0.3%로 완화
                         "exclude_keywords": secrets.get("EXCLUDE_KEYWORDS", [
                             "ETF", "ETN", "인버스", "레버리지", "선물", "합성",
                             "KODEX", "TIGER", "ARIRANG", "HANARO", "KBSTAR", "KOSEF",
@@ -108,7 +108,7 @@ class Config:
                             "rs_mkt": 0.15,
                             "rs_sector": 0.10,
                             "ma_align": 0.05,
-                            "lp": -0.10,
+                            "lp": 0.0, # 페널티 제거
                             "supply_score_multiplier": 0.5 # 100점 만점 점수를 50점 만점으로 변환
                         })
                     },

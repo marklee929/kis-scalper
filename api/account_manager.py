@@ -252,6 +252,55 @@ class KISAccountManager:
             logger.error(f"❌ [VOLUME] 거래량 순위 조회 오류: {e}")
             return []
 
+    def get_turnover_ranking(self, count: int = 20) -> List[Dict]:
+        """거래대금 순위 조회"""
+        try:
+            logger.info(f"📊 [TURNOVER] 거래대금 순위 조회 시작 (상위 {count}개)")
+            params = {
+                "FID_COND_MRKT_DIV_CODE": "J",
+                "FID_COND_SCR_DIV_CODE": "20172", # 거래대금 순위
+                "FID_INPUT_ISCD": "0000",
+                "FID_DIV_CLS_CODE": "0",
+                "FID_BLNG_CLS_CODE": "0",
+                "FID_TRGT_CLS_CODE": "111111111",
+                "FID_TRGT_EXLS_CLS_CODE": "100001011",
+                "FID_INPUT_PRICE_1": "",
+                "FID_INPUT_PRICE_2": "",
+                "FID_VOL_CNT": "",
+                "FID_INPUT_DATE_1": ""
+            }
+            data = self.api.request("volume_rank", params=params) # endpoint는 동일
+            if not (data and data.get("rt_cd") == "0"):
+                return []
+            
+            turnover_stocks = []
+            for i, stock in enumerate(data.get("output", [])[:count]):
+                try:
+                    stock_code = stock.get('mksc_shrn_iscd', '').zfill(6)
+                    stock_name = stock.get('hts_kor_isnm', '')
+                    current_price = int(stock.get('stck_prpr', 0) or 0)
+                    if not (stock_code and stock_name and current_price > 0):
+                        continue
+                    
+                    stock_info = {
+                        'code': stock_code,
+                        'name': stock_name,
+                        'current_price': current_price,
+                        'change_rate': float(stock.get('prdy_ctrt', 0) or 0),
+                        'volume': int(stock.get('acml_vol', 0) or 0),
+                        'turnover_rank': i + 1, # 거래대금 순위
+                        'turnover': int(stock.get('acml_tr_pbmn', 0) or 0), # 누적 거래대금
+                    }
+                    turnover_stocks.append(stock_info)
+                except (ValueError, TypeError) as e:
+                    logger.warning(f"⚠️ [TURNOVER] 종목 데이터 파싱 실패: {stock.get('hts_kor_isnm', 'Unknown')} - {e}")
+                    continue
+            logger.info(f"✅ [TURNOVER] 거래대금 순위 {len(turnover_stocks)}개 파싱 완료")
+            return turnover_stocks
+        except Exception as e:
+            logger.error(f"❌ [TURNOVER] 거래대금 순위 조회 오류: {e}")
+            return []
+
     def get_stock_price(self, stock_code: str) -> Dict:
         """종목 현재가 조회"""
         try:

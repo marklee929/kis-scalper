@@ -31,15 +31,11 @@ def _calculate_ema(prices, period):
     return pd.Series(prices).ewm(span=period, adjust=False).mean().iloc[-1]
 
 def _pick_swing_slice(rows: List[Dict]) -> List[Dict]:
-    """조건에 따라 스윙 후보군을 선택합니다."""
+    """조건에 따라 스윙 후보군을 선택합니다. (거래량 20위 이상 전체)"""
     n = len(rows)
-    if n < 10:
-        return []  # 너무 적으면 포기
-    if n < 30:
-        return rows[int(n * 0.5):]  # 하위 50%로 완화
-    if n < 70:
-        return rows[int(n * 0.6):]  # 하위 40%
-    return rows[39:70]  # 40~70위
+    if n < 20:
+        return rows # 20개 미만이면 전체 반환
+    return rows[19:]  # 20위부터 끝까지
 
 
 def get_swing_candidates(volume_stocks: List[Dict], config_obj: dict, market_cache) -> List[Dict]:
@@ -67,23 +63,7 @@ def get_swing_candidates(volume_stocks: List[Dict], config_obj: dict, market_cac
             etf_drop_count += 1
             continue
 
-        # 하락 추세 필터링
-        try:
-            ohlcv_5m = market_cache.get_candles(code, interval=5)
-            if not ohlcv_5m or len(ohlcv_5m) < 5: # Relaxed from 10
-                continue
-            
-            close_prices = [c['close'] for c in ohlcv_5m]
-            ema5 = _calculate_ema(close_prices, 5)
-            ema20 = _calculate_ema(close_prices, 20)
 
-            if ema5 < ema20:
-                logger.debug(f"[SWING-FILTER] 하락 추세로 스윙 후보 제외: {name}({code}) (5-EMA < 20-EMA)")
-                trend_drop_count += 1
-                continue
-        except Exception as e:
-            logger.warning(f"[SWING-FILTER] EMA 계산 오류로 {name}({code}) 스킵: {e}")
-            continue
 
         filtered_candidates.append(s)
 

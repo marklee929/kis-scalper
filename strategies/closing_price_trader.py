@@ -300,8 +300,7 @@ def closing_price_stock_filter(market_cache: MarketCache, candidates: List[Dict]
         try:
             code = stock_info['code']
             score_data = calculate_closing_price_score(market_cache, api, code, stock_info)
-            if score_data['total_score'] > 0:
-                scored_results.append(score_data)
+            scored_results.append(score_data)
         except Exception as e:
             logger.error(f"스코어 계산 중 오류 발생 ({stock_info.get('code')}): {e}", exc_info=False)
 

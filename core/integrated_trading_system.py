@@ -327,17 +327,16 @@ class IntegratedTradingSystem:
                 if self._is_screening_time(now):
                     logger.info("[SCREENER] 종가/스윙 후보군 스크리닝 시작...")
                     
-                    raw_volume_stocks = self.account_manager.get_volume_ranking(count=100)
-                    volume_stocks = [self._normalize_stock(r) for r in raw_volume_stocks]
+                    turnover_stocks = self.account_manager.get_turnover_ranking(count=100)
 
-                    swing_candidates_list = get_swing_candidates(volume_stocks, self.config, self.market_cache)
+                    swing_candidates_list = get_swing_candidates(turnover_stocks, self.config, self.market_cache)
                     self.swing_candidates = {s['code']: s for s in swing_candidates_list}
 
                     self.closing_price_candidates = closing_price_stock_filter(
-                        self.market_cache, volume_stocks, self.account_manager.api
+                        self.market_cache, turnover_stocks, self.account_manager.api
                     )
 
-                    if not self.closing_price_candidates and volume_stocks:
+                    if not self.closing_price_candidates and turnover_stocks:
                         logger.info("[SCREENER] 필터 0개 → Fallback 5개로 매수 대상 대체")
                         
                         def fallback_from_volume(volume_top: List[Dict], top_k: int) -> List[Dict]:
@@ -363,7 +362,7 @@ class IntegratedTradingSystem:
                                     break
                             return fallback_candidates
 
-                        self.closing_price_candidates = fallback_from_volume(volume_stocks, top_k=5)
+                        self.closing_price_candidates = fallback_from_volume(turnover_stocks, top_k=5)
 
                     logger.info(f"[SCREENER] 종가매매 후보군 업데이트 완료: {len(self.closing_price_candidates)}개")
                     logger.info(f"[SCREENER] 스윙 후보군 업데이트 완료: {len(self.swing_candidates)}개")
