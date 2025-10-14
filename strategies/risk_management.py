@@ -1,7 +1,8 @@
 # filepath: c:\WORK\kis-scalper\strategies\risk_management.py
 from datetime import datetime, timedelta
 from utils.logger import logger
-from typing import Dict, Optional
+from typing import Dict, Optional, List
+from dataclasses import dataclass
 import time
 
 class ScalpingRiskManager:
@@ -128,3 +129,70 @@ class ScalpingRiskManager:
 
 # 전역 인스턴스
 risk_manager = ScalpingRiskManager()
+
+
+@dataclass
+class PositionSizingResult:
+    """포지션 사이징 결과."""
+
+    quantity: int
+    risk_amount: float
+    atr: float
+    unit_size: float
+
+
+class PortfolioRiskManager:
+    """포트폴리오 레벨 리스크 관리 및 포지션 사이징 클래스."""
+
+    def __init__(self, settings: Dict[str, float]):
+        self.settings = settings
+
+    def calculate_position_size(
+        self,
+        price: float,
+        atr: float,
+        portfolio_value: float,
+    ) -> PositionSizingResult:
+        max_position_pct = float(self.settings.get("max_position_pct", 0.02))
+        stop_loss_multiplier = float(self.settings.get("stop_loss_atr_multiplier", 1.5))
+
+        risk_amount = portfolio_value * max_position_pct
+        atr_value = atr if atr > 0 else price * 0.02
+        unit_risk = atr_value * stop_loss_multiplier
+        if unit_risk == 0:
+            return PositionSizingResult(0, risk_amount, atr_value, 0)
+
+        quantity = int(risk_amount // unit_risk)
+        if quantity <= 0:
+            quantity = int((portfolio_value * 0.01) // price)
+
+        logger.info(
+            "[리스크] 포지션 크기 계산: 가격=%.2f ATR=%.2f 수량=%d",
+            price,
+            atr_value,
+            quantity,
+        )
+
+        return PositionSizingResult(quantity, risk_amount, atr_value, unit_risk)
+
+    def build_partial_exit_plan(self, price: float) -> List[Dict[str, float]]:
+        partials = self.settings.get("partial_take_profit_levels", [])
+        if not partials:
+            return []
+
+        plan = []
+        for leg in partials:
+            pct = float(leg.get("pct", 0))
+            multiple = float(leg.get("target_multiple", 1.5))
+            target = price * multiple
+            plan.append({"pct": pct, "target": target})
+
+        logger.info("[리스크] 부분 청산 계획: %s", plan)
+        return plan
+
+    def validate_stop_levels(self, price: float, stop_loss: float, take_profit: float) -> bool:
+        if price <= 0 or stop_loss <= 0 or take_profit <= 0:
+            return False
+        if stop_loss >= price and take_profit <= price:
+            return False
+        return True
