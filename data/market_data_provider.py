@@ -10,17 +10,6 @@ from typing import Iterable, List, Optional
 import logging
 
 import pandas as pd
-from requests import Session
-from requests.exceptions import SSLError as RequestsSSLError
-
-try:  # pragma: no cover - urllib3는 requests 내부 의존성
-    from urllib3.exceptions import SSLError as Urllib3SSLError
-except ModuleNotFoundError:  # pragma: no cover
-    Urllib3SSLError = tuple()  # type: ignore[assignment]
-
-import time
-
-import certifi
 
 logger = logging.getLogger(__name__)
 
@@ -46,10 +35,6 @@ class CorporateEvent:
     timestamp: datetime
     headline: str
     url: Optional[str] = None
-
-
-class MarketDataDownloadError(RuntimeError):
-    """시장 데이터 다운로드 실패 예외."""
 
 
 class MarketDataProvider(ABC):
@@ -101,15 +86,7 @@ class YFinanceDataProvider(MarketDataProvider):
     호출 시 예외를 발생시켜 상위 로직에서 처리하도록 합니다.
     """
 
-    def __init__(
-        self,
-        session: Optional[Session] = None,
-        *,
-        max_retries: int = 3,
-        retry_backoff: float = 1.5,
-        verify: bool = True,
-        cert_path: Optional[str] = None,
-    ):
+    def __init__(self):
         try:
             import yfinance as yf  # type: ignore
 
@@ -117,35 +94,18 @@ class YFinanceDataProvider(MarketDataProvider):
         except ModuleNotFoundError as exc:  # pragma: no cover - 런타임 의존성
             raise RuntimeError("yfinance 패키지가 설치되어 있지 않습니다.") from exc
 
-        self._session: Session = session or Session()
-        if verify:
-            self._session.verify = cert_path or certifi.where()
-        else:
-            self._session.verify = False  # type: ignore[assignment]
-
-        self._max_retries = max(1, max_retries)
-        self._retry_backoff = max(0.1, retry_backoff)
-
     def get_daily_history(self, symbol: str, lookback_days: int, end: Optional[datetime] = None) -> pd.DataFrame:
         end = end or datetime.utcnow()
         start = end - pd.Timedelta(days=lookback_days)
         logger.debug("[데이터] %s 일봉 다운로드 (%s~%s)", symbol, start.date(), end.date())
-        try:
-            data = self._download(symbol, start=start, end=end, interval="1d")
-        except MarketDataDownloadError as exc:
-            logger.error("[데이터] %s 일봉 다운로드 실패: %s", symbol, exc)
-            return pd.DataFrame()
+        data = self._yf.download(symbol, start=start, end=end, interval="1d")
         if data.empty:
             logger.warning("[데이터] %s 일봉 데이터가 비어 있습니다.", symbol)
         return data
 
     def get_intraday_history(self, symbol: str, period: str = "5d", interval: str = "1m") -> pd.DataFrame:
         logger.debug("[데이터] %s 분봉 다운로드 (period=%s, interval=%s)", symbol, period, interval)
-        try:
-            data = self._download(symbol, period=period, interval=interval, progress=False)
-        except MarketDataDownloadError as exc:
-            logger.error("[데이터] %s 분봉 다운로드 실패: %s", symbol, exc)
-            return pd.DataFrame()
+        data = self._yf.download(symbol, period=period, interval=interval, progress=False)
         if data.empty:
             logger.warning("[데이터] %s 분봉 데이터가 비어 있습니다.", symbol)
         return data
@@ -163,11 +123,7 @@ class YFinanceDataProvider(MarketDataProvider):
         ]
         result = []
         for symbol in sector_symbols:
-            try:
-                data = self._download(symbol, period=f"{lookback_weeks}wk", interval="1d", progress=False)
-            except MarketDataDownloadError as exc:
-                logger.error("[스크리너] 섹터 %s 데이터 수신 실패: %s", symbol, exc)
-                continue
+            data = self._yf.download(symbol, period=f"{lookback_weeks}wk", interval="1d", progress=False)
             if len(data) < 2:
                 continue
             start_price = data["Close"].iloc[0]
@@ -219,11 +175,7 @@ class YFinanceDataProvider(MarketDataProvider):
         while True:
             snapshot = []
             for symbol in symbols:
-                try:
-                    df = self.get_intraday_history(symbol, period="1d", interval=interval)
-                except MarketDataDownloadError as exc:
-                    logger.error("[데이터] %s 실시간 스냅샷 실패: %s", symbol, exc)
-                    continue
+                df = self.get_intraday_history(symbol, period="1d", interval=interval)
                 if not df.empty:
                     last = df.tail(1).copy()
                     last["symbol"] = symbol
@@ -233,53 +185,4 @@ class YFinanceDataProvider(MarketDataProvider):
             else:  # pragma: no cover - 네트워크 미가용 시
                 logger.warning("[데이터] 실시간 스냅샷이 비었습니다. 잠시 후 재시도합니다.")
             # 외부에서 제어하도록 호출 측에서 sleep 처리
-
-    def _download(self, symbol: str, **kwargs) -> pd.DataFrame:
-        """yfinance 다운로드 헬퍼 (재시도 & 인증서 오류 처리)."""
-
-        kwargs.setdefault("progress", False)
-        kwargs.setdefault("auto_adjust", False)
-
-        last_exception: Optional[Exception] = None
-        for attempt in range(1, self._max_retries + 1):
-            try:
-                data = self._yf.download(symbol, session=self._session, **kwargs)
-                if isinstance(data, dict):  # pragma: no cover - 다중 티커 반환 방지
-                    return pd.DataFrame()
-                return data
-            except Exception as exc:  # pragma: no cover - 네트워크 실패 분기
-                last_exception = exc
-                if self._is_certificate_error(exc):
-                    message = (
-                        "SSL 인증서 검증에 실패했습니다. Windows 환경이라면 `Install Certificates.command` "
-                        "실행 또는 시스템 프록시 설정을 확인해 주세요."
-                    )
-                    raise MarketDataDownloadError(message) from exc
-
-                if attempt >= self._max_retries:
-                    break
-
-                logger.warning(
-                    "[데이터] %s 다운로드 실패(%d/%d): %s", symbol, attempt, self._max_retries, exc
-                )
-                time.sleep(self._retry_backoff * attempt)
-
-        raise MarketDataDownloadError(str(last_exception))
-
-    @staticmethod
-    def _is_certificate_error(exc: Exception) -> bool:
-        """SSL 인증서 오류 여부를 판별."""
-
-        certificate_errors = (
-            RequestsSSLError if isinstance(RequestsSSLError, tuple) else (RequestsSSLError,)
-        )
-        urllib_errors = (
-            Urllib3SSLError if isinstance(Urllib3SSLError, tuple) else (Urllib3SSLError,)
-        )
-
-        if isinstance(exc, (*certificate_errors, *urllib_errors)):
-            return True
-
-        message = str(exc).lower()
-        return "certificate" in message and "verify" in message
 
