@@ -13,10 +13,19 @@ from utils.notifier import notifier
 from strategies.closing_price_trader import closing_price_stock_filter
 from strategies.swing_screener import get_swing_candidates, is_etf_like
 from strategies.news_handler import on_news_event
+from strategies.dynamic_screener import DynamicScreener
+from strategies.strategy_engine import (
+    StrategyEngine,
+    MovingAverageCrossoverStrategy,
+    RSISwingStrategy,
+    BollingerMeanReversionStrategy,
+)
+from strategies.risk_management import PortfolioRiskManager
 from data.data_logger import data_logger
 from data.event_logger import event_logger
+from data.market_data_provider import YFinanceDataProvider
 from web_socket.web_socket_manager import KISWebSocketClient
-from web_socket.market_cache import init_market_cache    
+from web_socket.market_cache import init_market_cache
 from core.config import config
 from core.position_manager import RealPositionManager
 from utils.balance_manager import BalanceManager
@@ -49,6 +58,12 @@ class IntegratedTradingSystem:
 
         signal.signal(signal.SIGINT, self._signal_handler)
         self.market_cache = None
+        self.strategy_settings = self.config.get('strategy', {})
+        self.market_data_settings = self.config.get('market_data', {})
+        self.market_data_provider = None
+        self.dynamic_screener: Optional[DynamicScreener] = None
+        self.strategy_engine: Optional[StrategyEngine] = None
+        self.portfolio_risk_manager: Optional[PortfolioRiskManager] = None
         logger.info("[SYSTEM] 종가 매매 전략 시스템으로 초기화")
 
     def _normalize_code(self, code: str) -> str:
@@ -65,8 +80,50 @@ class IntegratedTradingSystem:
                 raise Exception("API 계정 인증 실패")
             logger.info("[SYSTEM] API 계정 인증 완료")
 
+            self.strategy_engine = StrategyEngine([
+                MovingAverageCrossoverStrategy(),
+                RSISwingStrategy(),
+                BollingerMeanReversionStrategy(),
+            ])
+            self.portfolio_risk_manager = PortfolioRiskManager(self.strategy_settings.get('risk_management', {}))
+
+            market_data_config = self.market_data_settings or {}
+            provider_name = str(market_data_config.get('provider', 'kis')).lower()
+
+            if provider_name == 'yfinance':
+                yf_config = market_data_config.get('yfinance') or market_data_config
+                try:
+                    self.market_data_provider = YFinanceDataProvider(
+                        max_retries=int(yf_config.get('max_retries', 3)),
+                        retry_backoff=float(yf_config.get('retry_backoff', 1.5)),
+                        verify=bool(yf_config.get('verify', True)),
+                        cert_path=yf_config.get('cert_path'),
+                        cert_copy_dir=yf_config.get('cert_copy_dir'),
+                        auto_copy_cert=bool(yf_config.get('auto_copy_cert', False)),
+                        suppress_yf_warnings=bool(yf_config.get('suppress_yf_warnings', True)),
+                    )
+                    self.dynamic_screener = DynamicScreener(
+                        self.market_data_provider,
+                        self.strategy_settings,
+                        news_fetcher,
+                    )
+                    logger.info("[SYSTEM] yfinance 데이터 공급자를 활성화했습니다.")
+                except Exception as data_exc:
+                    logger.warning("[SYSTEM] yfinance 초기화 실패: %s", data_exc)
+                    self.market_data_provider = None
+                    self.dynamic_screener = None
+            else:
+                logger.info(
+                    "[SYSTEM] market_data.provider=%s 설정으로 yfinance 기반 동적 스크리너를 비활성화합니다.",
+                    provider_name,
+                )
+                if provider_name == 'kis':
+                    logger.info(
+                        "[SYSTEM] KIS/OpenAPI 기반 시세 연동만 사용하며 해외 ETF 보조지표는 조회하지 않습니다."
+                    )
+
             self.market_cache = init_market_cache(self.config, self.position_manager, self.account_manager)
-            
+
             self.beginning_total_assets = self.account_manager.get_total_assets()
             if self.beginning_total_assets == 0:
                 logger.error("[SYSTEM] 시작 총자산 조회 실패. 시스템을 시작할 수 없습니다.")
@@ -299,17 +356,64 @@ class IntegratedTradingSystem:
         name = rec.get("name") or rec.get("stock_name") or rec.get("hts_kor_isnm") or ""
         code = rec.get("code") or rec.get("symbol") or rec.get("mksc_shrn_iscd") or rec.get("srtn_cd") or ""
         rank = rec.get("volume_rank") or rec.get("rank") or rec.get("stck_ranking") or None
-        
+
         # API 응답의 다양한 거래대금 필드를 'turnover'로 표준화 (누적거래대금)
         turnover = rec.get("turnover") or rec.get("acml_tr_pbmn") or rec.get("acc_trdval") or 0
 
         return {"name": name, "code": code, "volume_rank": rank, "turnover": self._safe_int(turnover), **rec}
 
+    def _extract_universe_symbols(self, turnover_stocks: List[Dict]) -> List[str]:
+        base_universe = self.strategy_settings.get('universe', {}).get('default_universe', [])
+        symbols = []
+        for stock in turnover_stocks:
+            code = stock.get('code') or stock.get('mksc_shrn_iscd') or stock.get('srtn_cd') or stock.get('symbol')
+            if not code:
+                continue
+            normalized = str(code).lstrip('A')
+            if normalized not in symbols:
+                symbols.append(normalized)
+        combined = list(dict.fromkeys(base_universe + symbols))
+        return combined
 
+    def _report_dynamic_screening(self, result) -> None:
+        try:
+            top_n = 5
+            leaders = ", ".join(result.sector_leaders) if result.sector_leaders else "자료 없음"
+            message_lines = ["*🔔 데이터 기반 종목 업데이트*", f"시장 기조: {result.market_bias} / 선호 섹터: {leaders}"]
 
-    def _closing_price_screening_worker(self):
-        """장중 후보군 스크리닝 (09:30 ~ 15:20)"""
-        
+            message_lines.append("\n*📈 종가매매 후보*")
+            if result.closing_candidates:
+                for idx, cand in enumerate(result.closing_candidates[:top_n]):
+                    message_lines.append(
+                        f"{idx+1}. {cand.name} ({cand.symbol}) - 점수 {cand.score:.1f} / 추세 {cand.metadata.get('trend_bias')}"
+                    )
+                    for news in cand.news:
+                        message_lines.append(
+                            f"    · 📰 {news.get('timestamp', '')} {news.get('title', '')} {news.get('link', '')}"
+                        )
+            else:
+                message_lines.append("- 후보 없음")
+
+            message_lines.append("\n*🪝 스윙 후보*")
+            if result.swing_candidates:
+                for idx, cand in enumerate(result.swing_candidates[:top_n]):
+                    message_lines.append(
+                        f"{idx+1}. {cand.name} ({cand.symbol}) - 점수 {cand.score:.1f} / 추세 {cand.metadata.get('trend_bias')}"
+                    )
+                    for news in cand.news:
+                        message_lines.append(
+                            f"    · 📰 {news.get('timestamp', '')} {news.get('title', '')} {news.get('link', '')}"
+                        )
+            else:
+                message_lines.append("- 후보 없음")
+
+            full_message = "\n".join(message_lines)
+            logger.info(full_message)
+            notifier.send_message(full_message)
+        except Exception as exc:  # pragma: no cover
+            logger.error("[SCREENER] 결과 보고 중 오류: %s", exc, exc_info=True)
+
+    def _legacy_screen(self, turnover_stocks: List[Dict]) -> None:
         def _append_news_line(lines, name):
             if not news_fetcher:
                 return
@@ -321,81 +425,150 @@ class IntegratedTradingSystem:
             except Exception:
                 pass
 
+        swing_candidates_list = get_swing_candidates(turnover_stocks, self.config, self.market_cache)
+        self.swing_candidates = {s['code']: s for s in swing_candidates_list}
+
+        self.closing_price_candidates = closing_price_stock_filter(
+            self.market_cache, turnover_stocks, self.account_manager.api
+        )
+
+        if not self.closing_price_candidates and turnover_stocks:
+            logger.info("[SCREENER] 필터 0개 → Fallback 5개로 매수 대상 대체")
+
+            def fallback_from_volume(volume_top: List[Dict], top_k: int) -> List[Dict]:
+                trading_config = self.config.get('trading', {})
+                fallback_candidates = []
+                for stock in volume_top:
+                    if is_etf_like(stock.get('name', ''), stock.get('code', ''), trading_config):
+                        continue
+                    if stock.get('turnover', 0) > 0:
+                        fallback_candidates.append({
+                            'code': stock.get('code'),
+                            'name': stock.get('name', ''),
+                            'turnover': stock.get('turnover', 0),
+                            'total_score': 1.0,
+                            'scores': {},
+                            'reason': 'fallback_volume'
+                        })
+                    if len(fallback_candidates) >= top_k:
+                        break
+                return fallback_candidates
+
+            self.closing_price_candidates = fallback_from_volume(turnover_stocks, top_k=5)
+
+        logger.info(f"[SCREENER] 종가매매 후보군 업데이트 완료: {len(self.closing_price_candidates)}개")
+        logger.info(f"[SCREENER] 스윙 후보군 업데이트 완료: {len(self.swing_candidates)}개")
+
+        if self.closing_price_candidates or self.swing_candidates:
+            top_n = 5
+            message_lines = ["*🔔 종가/스윙 후보 업데이트*"]
+
+            message_lines.append("\n*📈 종가매매 후보*")
+            if self.closing_price_candidates:
+                for i, stock in enumerate(self.closing_price_candidates[:top_n]):
+                    score_display = f"점수: {stock.get('total_score', 0):.1f}"
+                    line = f"{i+1}. {stock['name']} ({stock['code']}) - {score_display}"
+                    message_lines.append(line)
+                    _append_news_line(message_lines, stock['name'])
+            else:
+                message_lines.append("- 후보 없음")
+
+            message_lines.append("\n*🪝 스윙 후보 (모니터링)*")
+            if self.swing_candidates:
+                for i, stock in enumerate(list(self.swing_candidates.values())[:top_n]):
+                    line = f"{i+1}. {stock['name']} ({stock['code']}) (거래량순위: {stock.get('volume_rank', 'N/A')})"
+                    message_lines.append(line)
+                    _append_news_line(message_lines, stock['name'])
+            else:
+                message_lines.append("- 후보 없음")
+
+            full_message = "\n".join(message_lines)
+            logger.info(full_message)
+            notifier.send_message(full_message)
+
+    def _build_trade_plan(self, code: str, price: float, desired_cash: float):
+        if not (self.strategy_engine and self.market_data_provider and self.portfolio_risk_manager):
+            return None
+
+        try:
+            history = self.market_data_provider.get_daily_history(code, lookback_days=240)
+            if history.empty or price <= 0:
+                return None
+
+            risk_cfg = dict(self.strategy_settings.get('risk_management', {}))
+            risk_cfg.update(self.strategy_settings.get('execution', {}))
+            partial_plan = self.portfolio_risk_manager.build_partial_exit_plan(price)
+            risk_cfg['partial_exit_plan'] = partial_plan
+
+            trade_plans = self.strategy_engine.build_trade_plan(code, history, 1, risk_cfg)
+            if not trade_plans:
+                return None
+
+            for plan in trade_plans:
+                if plan.action != 'BUY':
+                    continue
+                portfolio_value = self.account_manager.get_total_assets()
+                sizing = self.portfolio_risk_manager.calculate_position_size(price, plan.atr, portfolio_value)
+                if sizing.quantity <= 0:
+                    continue
+                max_qty_by_cash = int(desired_cash // price)
+                quantity = max(0, min(sizing.quantity, max_qty_by_cash))
+                if quantity <= 0:
+                    continue
+                plan.quantity = quantity
+                plan.price = price
+                return plan
+        except Exception as exc:
+            logger.error(f"[BUY_WORKER] 전략 기반 거래 계획 생성 실패: {exc}", exc_info=True)
+        return None
+
+
+
+    def _closing_price_screening_worker(self):
+        """장중 후보군 스크리닝 (09:30 ~ 15:20)"""
+
         while not self.shutdown_event.is_set():
             try:
                 now = datetime.now()
                 if self._is_screening_time(now):
                     logger.info("[SCREENER] 종가/스윙 후보군 스크리닝 시작...")
-                    
-                    turnover_stocks = self.account_manager.get_turnover_ranking(count=100)
 
-                    swing_candidates_list = get_swing_candidates(turnover_stocks, self.config, self.market_cache)
-                    self.swing_candidates = {s['code']: s for s in swing_candidates_list}
+                    turnover_stocks = self.account_manager.get_turnover_ranking(count=150) or []
+                    universe = self._extract_universe_symbols(turnover_stocks)
+                    code_name_map = {}
+                    for stock in turnover_stocks:
+                        code = stock.get('code') or stock.get('mksc_shrn_iscd') or stock.get('srtn_cd') or stock.get('symbol')
+                        if code:
+                            normalized = str(code).lstrip('A')
+                            code_name_map[normalized] = stock.get('name') or stock.get('hts_kor_isnm') or normalized
 
-                    self.closing_price_candidates = closing_price_stock_filter(
-                        self.market_cache, turnover_stocks, self.account_manager.api
-                    )
+                    used_dynamic = False
+                    if self.dynamic_screener:
+                        logger.info("[SCREENER] 동적 필터 적용: %d개 종목", len(universe))
+                        result = self.dynamic_screener.screen(universe)
+                        if result.closing_candidates or result.swing_candidates:
+                            used_dynamic = True
+                            self._report_dynamic_screening(result)
 
-                    if not self.closing_price_candidates and turnover_stocks:
-                        logger.info("[SCREENER] 필터 0개 → Fallback 5개로 매수 대상 대체")
-                        
-                        def fallback_from_volume(volume_top: List[Dict], top_k: int) -> List[Dict]:
-                            """거래량 상위 목록에서 Fallback 후보를 생성합니다."""
-                            trading_config = self.config.get('trading', {})
-                            fallback_candidates = []
-                            for stock in volume_top:
-                                # is_etf_like를 사용하여 ETF 필터링
-                                if is_etf_like(stock.get('name', ''), stock.get('code', ''), trading_config):
-                                    continue
-                                
-                                # turnover가 0이 아닌 종목만 포함 (최소한의 데이터 품질 보장)
-                                if stock.get('turnover', 0) > 0:
-                                    fallback_candidates.append({
-                                        'code': stock.get('code'), 
-                                        'name': stock.get('name', ''), 
-                                        'turnover': stock.get('turnover', 0),
-                                        'total_score': 1.0,  # 0점 대신 1점으로 설정하여 가중치 계산 시 제외되지 않도록 함
-                                        'scores': {}, 
-                                        'reason': 'fallback_volume'
-                                    })
-                                if len(fallback_candidates) >= top_k:
-                                    break
-                            return fallback_candidates
+                            self.closing_price_candidates = []
+                            for cand in result.closing_candidates:
+                                cand_dict = cand.to_dict()
+                                symbol = cand.symbol
+                                cand_dict['name'] = code_name_map.get(symbol, cand_dict.get('name', symbol))
+                                self.closing_price_candidates.append(cand_dict)
 
-                        self.closing_price_candidates = fallback_from_volume(turnover_stocks, top_k=5)
-
-                    logger.info(f"[SCREENER] 종가매매 후보군 업데이트 완료: {len(self.closing_price_candidates)}개")
-                    logger.info(f"[SCREENER] 스윙 후보군 업데이트 완료: {len(self.swing_candidates)}개")
-
-                    if self.closing_price_candidates or self.swing_candidates:
-                        top_n = 5
-                        message_lines = ["*🔔 종가/스윙 후보 업데이트*"]
-                        
-                        # 종가 후보 생성
-                        message_lines.append("\n*📈 종가매매 후보*")
-                        if self.closing_price_candidates:
-                            for i, stock in enumerate(self.closing_price_candidates[:top_n]):
-                                score_display = f"점수: {stock.get('total_score', 0):.1f}"
-                                line = f"{i+1}. {stock['name']} ({stock['code']}) - {score_display}"
-                                message_lines.append(line)
-                                _append_news_line(message_lines, stock['name'])
+                            self.swing_candidates = {}
+                            for cand in result.swing_candidates:
+                                cand_dict = cand.to_dict()
+                                symbol = cand.symbol
+                                cand_dict['name'] = code_name_map.get(symbol, cand_dict.get('name', symbol))
+                                self.swing_candidates[cand.symbol] = cand_dict
                         else:
-                            message_lines.append("- 후보 없음")
+                            logger.info("[SCREENER] 동적 필터 결과가 비어 기존 규칙으로 대체합니다.")
 
-                        # 스윙 후보 생성
-                        message_lines.append("\n*🪝 스윙 후보 (모니터링)*")
-                        if self.swing_candidates:
-                            for i, stock in enumerate(list(self.swing_candidates.values())[:top_n]):
-                                line = f"{i+1}. {stock['name']} ({stock['code']}) (거래량순위: {stock.get('volume_rank', 'N/A')})"
-                                message_lines.append(line)
-                                _append_news_line(message_lines, stock['name'])
-                        else:
-                            message_lines.append("- 후보 없음")
+                    if not used_dynamic:
+                        self._legacy_screen(turnover_stocks)
 
-                        full_message = "\n".join(message_lines)
-                        logger.info(full_message)
-                        notifier.send_message(full_message)
-                    
                     closing_codes = {self._normalize_code(c['code']) for c in self.closing_price_candidates}
                     swing_codes = {self._normalize_code(c['code']) for c in self.swing_candidates.values()}
                     self._update_subscriptions(closing_codes.union(swing_codes))
@@ -488,64 +661,87 @@ class IntegratedTradingSystem:
                             continue
 
                         budget_per_stock = initial_cash_balance * weight
-                        
+                        code_clean = str(code).lstrip('A')
+
                         quote_info = self.market_cache.get_quote_full(code)
-                        if not quote_info or not quote_info.get('ask_price', 0) > 0:
-                            logger.warning(f"[BUY_WORKER] {name} ({code}) 호가 정보가 없어 시장가로 주문합니다.")
-                            current_price = quote_info.get('price', 0) if quote_info else 0
-                            if current_price > 0:
-                                shares = int(budget_per_stock // current_price)
-                                required_cash = shares * current_price
-                                if running_cash_balance < required_cash:
-                                    logger.warning(f"[BUY_WORKER] {name} ({code}) 필요금액({required_cash:,.0f})이 잔고({running_cash_balance:,.0f})를 초과하여 시장가 매수를 건너뜁니다.")
-                                    continue
-                                
-                                if shares > 0:
-                                    result = self.account_manager.place_buy_order_market(code, shares)
-                                    if result and result.get('success'):
-                                        logger.info(f"[BUY] 시장가 매수 주문 성공: {name} ({code}) {shares}주")
-                                        running_cash_balance -= required_cash
-                                        self.position_manager.add_position(code, shares, current_price, name)
-                                        trade_summary.record_trade(
-                                            code=code, name=name, action='BUY', quantity=shares, price=current_price,
-                                            order_id=result.get('order_id', ''), strategy='ClosingPrice_Market',
-                                            weight=weight
-                                        )
-                                        buy_names.append(name)
+                        best_ask = quote_info.get('ask_price', 0) if quote_info else 0
+                        current_price = quote_info.get('price', 0) if quote_info else 0
+                        order_price = best_ask if best_ask > 0 else current_price
+
+                        if order_price <= 0:
+                            logger.warning(f"[BUY_WORKER] {name} ({code}) 실시간 가격 정보 부족으로 매수를 건너뜁니다.")
                             continue
 
-                        best_ask = quote_info.get('ask_price', 0)
-
-                        if best_ask > 0:
-                            shares = int(budget_per_stock // best_ask)
-                            required_cash = shares * best_ask
-                            if running_cash_balance < required_cash:
-                                logger.warning(f"[BUY_WORKER] {name} ({code}) 필요금액({required_cash:,.0f})이 잔고({running_cash_balance:,.0f})를 초과하여 LTM 매수를 건너뜁니다.")
-                                continue
-
-                            if shares > 0:
-                                logger.info(f"[BUY_WORKER] {name} ({code}) {shares}주 매수 시도 (지정가: {best_ask})")
-                                result = self.account_manager.place_buy_with_limit_then_market(
-                                    stock_code=code,
-                                    quantity=shares,
-                                    limit_price=best_ask
-                                )
-                                
-                                if result.ok and result.filled_qty > 0:
-                                    filled_amount = result.filled_qty * best_ask # LTM이므로 지정가 기준으로 차감
-                                    running_cash_balance -= filled_amount
-                                    logger.info(f"[BUY] LTM 매수 성공: {name} ({code}) {result.filled_qty}주. 메시지: {result.msg}")
-                                    self.position_manager.add_position(code, result.filled_qty, best_ask, name)
-                                    trade_summary.record_trade(
-                                        code=code, name=name, action='BUY', quantity=result.filled_qty, price=best_ask,
-                                        order_id=result.order_id, strategy='ClosingPrice_LTM',
-                                        weight=weight
-                                    )
-                                    buy_names.append(name)
-                                else:
-                                    logger.error(f"[BUY] LTM 매수 최종 실패: {name} ({code}). 메시지: {result.msg}")
+                        trade_plan = self._build_trade_plan(code_clean, order_price, budget_per_stock)
+                        if trade_plan:
+                            shares = trade_plan.quantity
+                            order_mode = trade_plan.order_type
+                            strategy_name = trade_plan.strategy
                         else:
-                            logger.warn(f"[BUY_WORKER] {name} ({code}) 최우선 매도 호가를 찾을 수 없어 매수를 건너뜁니다.")
+                            shares = int(budget_per_stock // order_price)
+                            order_mode = 'limit' if best_ask > 0 else 'market'
+                            strategy_name = 'ClosingPrice'
+
+                        if shares <= 0:
+                            logger.warning(f"[BUY_WORKER] {name} ({code}) 계산된 매수 수량이 0주입니다.")
+                            continue
+
+                        required_cash = shares * order_price
+                        if running_cash_balance < required_cash:
+                            logger.warning(
+                                f"[BUY_WORKER] {name} ({code}) 필요금액({required_cash:,.0f})이 잔고({running_cash_balance:,.0f})를 초과하여 매수를 건너뜁니다."
+                            )
+                            continue
+
+                        if order_mode == 'market' or best_ask <= 0:
+                            result = self.account_manager.place_buy_order_market(code, shares)
+                            if result and result.get('success'):
+                                logger.info(f"[BUY] 시장가 매수 주문 성공: {name} ({code}) {shares}주")
+                                running_cash_balance -= required_cash
+                                self.position_manager.add_position(code, shares, order_price, name)
+                                trade_summary.record_trade(
+                                    code=code, name=name, action='BUY', quantity=shares, price=order_price,
+                                    order_id=result.get('order_id', ''), strategy=strategy_name,
+                                    weight=weight
+                                )
+                                if trade_plan:
+                                    stop_info = f"{trade_plan.stop_loss:.2f}" if trade_plan.stop_loss else "N/A"
+                                    target_info = f"{trade_plan.take_profit:.2f}" if trade_plan.take_profit else "N/A"
+                                    logger.info(
+                                        f"[BUY] 전략 계획 적용: 손절 {stop_info} / 목표 {target_info}"
+                                    )
+                                    if trade_plan.partial_exit:
+                                        logger.info(f"[BUY] 부분 청산 계획: {trade_plan.partial_exit}")
+                                buy_names.append(name)
+                        else:
+                            logger.info(f"[BUY_WORKER] {name} ({code}) {shares}주 매수 시도 (지정가: {best_ask})")
+                            result = self.account_manager.place_buy_with_limit_then_market(
+                                stock_code=code,
+                                quantity=shares,
+                                limit_price=best_ask
+                            )
+
+                            if result.ok and result.filled_qty > 0:
+                                filled_amount = result.filled_qty * best_ask
+                                running_cash_balance -= filled_amount
+                                logger.info(f"[BUY] LTM 매수 성공: {name} ({code}) {result.filled_qty}주. 메시지: {result.msg}")
+                                self.position_manager.add_position(code, result.filled_qty, best_ask, name)
+                                trade_summary.record_trade(
+                                    code=code, name=name, action='BUY', quantity=result.filled_qty, price=best_ask,
+                                    order_id=result.order_id, strategy=strategy_name,
+                                    weight=weight
+                                )
+                                if trade_plan:
+                                    stop_info = f"{trade_plan.stop_loss:.2f}" if trade_plan.stop_loss else "N/A"
+                                    target_info = f"{trade_plan.take_profit:.2f}" if trade_plan.take_profit else "N/A"
+                                    logger.info(
+                                        f"[BUY] 전략 계획 적용: 손절 {stop_info} / 목표 {target_info}"
+                                    )
+                                    if trade_plan.partial_exit:
+                                        logger.info(f"[BUY] 부분 청산 계획: {trade_plan.partial_exit}")
+                                buy_names.append(name)
+                            else:
+                                logger.error(f"[BUY] LTM 매수 최종 실패: {name} ({code}). 메시지: {result.msg}")
 
                     if buy_names:
                         notifier.send_message(f"종가 매수 완료 (LTM 방식): {', '.join(buy_names)}")
@@ -625,7 +821,9 @@ def load_config() -> Dict:
             'api': config.get_kis_config(),
             'telegram': config.get_telegram_config(),
             'trading': config.get_trading_config(),
-            'system': config.get('system', {})
+            'system': config.get('system', {}),
+            'strategy': config.get_strategy_settings(),
+            'market_data': config.get_market_data_settings(),
         }
     except Exception as e:
         logger.error(f"[CONFIG] 설정 로드 실패: {e}", exc_info=True)
