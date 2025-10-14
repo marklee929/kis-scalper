@@ -5,27 +5,11 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Iterable, List, Optional
+from typing import Iterable, List, Optional
 
 import logging
-import os
-import shutil
-import warnings
 
 import pandas as pd
-from requests import Session
-from requests.exceptions import SSLError as RequestsSSLError
-
-from pathlib import Path
-
-try:  # pragma: no cover - urllib3는 requests 내부 의존성
-    from urllib3.exceptions import SSLError as Urllib3SSLError
-except ModuleNotFoundError:  # pragma: no cover
-    Urllib3SSLError = tuple()  # type: ignore[assignment]
-
-import time
-
-import certifi
 
 logger = logging.getLogger(__name__)
 
@@ -51,10 +35,6 @@ class CorporateEvent:
     timestamp: datetime
     headline: str
     url: Optional[str] = None
-
-
-class MarketDataDownloadError(RuntimeError):
-    """시장 데이터 다운로드 실패 예외."""
 
 
 class MarketDataProvider(ABC):
@@ -106,62 +86,26 @@ class YFinanceDataProvider(MarketDataProvider):
     호출 시 예외를 발생시켜 상위 로직에서 처리하도록 합니다.
     """
 
-    def __init__(
-        self,
-        session: Optional[Session] = None,
-        *,
-        max_retries: int = 3,
-        retry_backoff: float = 1.5,
-        verify: bool = True,
-        cert_path: Optional[str] = None,
-        cert_copy_dir: Optional[str] = None,
-        auto_copy_cert: bool = False,
-        suppress_yf_warnings: bool = True,
-        yf_module: Optional[Any] = None,
-    ):
-        self._yf = self._load_yfinance_module(yf_module)
-        self._suppress_yf_logging(suppress_yf_warnings)
+    def __init__(self):
+        try:
+            import yfinance as yf  # type: ignore
 
-        self._session: Session = session or Session()
-        self._session.headers.setdefault("User-Agent", "kis-scalper/1.0")
-        self._session.trust_env = True
-
-        if verify:
-            resolved_cert = self._resolve_certificate(cert_path, auto_copy_cert, cert_copy_dir)
-            self._session.verify = resolved_cert
-            if isinstance(resolved_cert, str):
-                if not os.environ.get("SSL_CERT_FILE"):
-                    os.environ["SSL_CERT_FILE"] = resolved_cert
-                if not os.environ.get("REQUESTS_CA_BUNDLE"):
-                    os.environ["REQUESTS_CA_BUNDLE"] = resolved_cert
-        else:
-            self._session.verify = False  # type: ignore[assignment]
-
-        self._max_retries = max(1, max_retries)
-        self._retry_backoff = max(0.1, retry_backoff)
-        self._certificate_error_reported = False
-        self._failure_reasons: dict[str, int] = {}
+            self._yf = yf
+        except ModuleNotFoundError as exc:  # pragma: no cover - 런타임 의존성
+            raise RuntimeError("yfinance 패키지가 설치되어 있지 않습니다.") from exc
 
     def get_daily_history(self, symbol: str, lookback_days: int, end: Optional[datetime] = None) -> pd.DataFrame:
         end = end or datetime.utcnow()
         start = end - pd.Timedelta(days=lookback_days)
         logger.debug("[데이터] %s 일봉 다운로드 (%s~%s)", symbol, start.date(), end.date())
-        try:
-            data = self._download(symbol, start=start, end=end, interval="1d")
-        except MarketDataDownloadError as exc:
-            self._log_download_failure("데이터", f"{symbol} 일봉", exc)
-            return pd.DataFrame()
+        data = self._yf.download(symbol, start=start, end=end, interval="1d")
         if data.empty:
             logger.warning("[데이터] %s 일봉 데이터가 비어 있습니다.", symbol)
         return data
 
     def get_intraday_history(self, symbol: str, period: str = "5d", interval: str = "1m") -> pd.DataFrame:
         logger.debug("[데이터] %s 분봉 다운로드 (period=%s, interval=%s)", symbol, period, interval)
-        try:
-            data = self._download(symbol, period=period, interval=interval, progress=False)
-        except MarketDataDownloadError as exc:
-            self._log_download_failure("데이터", f"{symbol} 분봉", exc)
-            return pd.DataFrame()
+        data = self._yf.download(symbol, period=period, interval=interval, progress=False)
         if data.empty:
             logger.warning("[데이터] %s 분봉 데이터가 비어 있습니다.", symbol)
         return data
@@ -179,14 +123,7 @@ class YFinanceDataProvider(MarketDataProvider):
         ]
         result = []
         for symbol in sector_symbols:
-            try:
-                data = self._download(symbol, period=f"{lookback_weeks}wk", interval="1d", progress=False)
-            except MarketDataDownloadError as exc:
-                self._log_download_failure("스크리너", f"{symbol} 섹터 데이터", exc)
-                if "SSL 인증서" in str(exc):
-                    logger.info("[스크리너] SSL 인증서 문제로 추가 섹터 조회를 중단합니다.")
-                    break
-                continue
+            data = self._yf.download(symbol, period=f"{lookback_weeks}wk", interval="1d", progress=False)
             if len(data) < 2:
                 continue
             start_price = data["Close"].iloc[0]
@@ -238,11 +175,7 @@ class YFinanceDataProvider(MarketDataProvider):
         while True:
             snapshot = []
             for symbol in symbols:
-                try:
-                    df = self.get_intraday_history(symbol, period="1d", interval=interval)
-                except MarketDataDownloadError as exc:
-                    self._log_download_failure("데이터", f"{symbol} 실시간 스냅샷", exc)
-                    continue
+                df = self.get_intraday_history(symbol, period="1d", interval=interval)
                 if not df.empty:
                     last = df.tail(1).copy()
                     last["symbol"] = symbol
@@ -252,152 +185,4 @@ class YFinanceDataProvider(MarketDataProvider):
             else:  # pragma: no cover - 네트워크 미가용 시
                 logger.warning("[데이터] 실시간 스냅샷이 비었습니다. 잠시 후 재시도합니다.")
             # 외부에서 제어하도록 호출 측에서 sleep 처리
-
-    def _download(self, symbol: str, **kwargs) -> pd.DataFrame:
-        """yfinance 다운로드 헬퍼 (재시도 & 인증서 오류 처리)."""
-
-        kwargs.setdefault("progress", False)
-        kwargs.setdefault("auto_adjust", False)
-
-        last_exception: Optional[Exception] = None
-        for attempt in range(1, self._max_retries + 1):
-            try:
-                data = self._yf.download(symbol, session=self._session, **kwargs)
-                if isinstance(data, dict):  # pragma: no cover - 다중 티커 반환 방지
-                    return pd.DataFrame()
-                return data
-            except Exception as exc:  # pragma: no cover - 네트워크 실패 분기
-                last_exception = exc
-                if self._is_certificate_error(exc):
-                    message = (
-                        "SSL 인증서 검증에 실패했습니다. `config/strategy_settings.yaml`의 market_data 설정에서 "
-                        "cert_path 또는 auto_copy_cert 값을 점검하거나 SSL_CERT_FILE/REQUESTS_CA_BUNDLE 환경 변수를 "
-                        "ASCII 경로로 지정해 주세요."
-                    )
-                    if not self._certificate_error_reported:
-                        logger.error("[데이터] SSL 인증서 오류 감지: %s", exc)
-                        self._certificate_error_reported = True
-                    raise MarketDataDownloadError(message) from exc
-
-                if attempt >= self._max_retries:
-                    break
-
-                logger.warning(
-                    "[데이터] %s 다운로드 실패(%d/%d): %s", symbol, attempt, self._max_retries, exc
-                )
-                time.sleep(self._retry_backoff * attempt)
-
-        raise MarketDataDownloadError(str(last_exception))
-
-    @staticmethod
-    def _is_certificate_error(exc: Exception) -> bool:
-        """SSL 인증서 오류 여부를 판별."""
-
-        certificate_errors = (
-            RequestsSSLError if isinstance(RequestsSSLError, tuple) else (RequestsSSLError,)
-        )
-        urllib_errors = (
-            Urllib3SSLError if isinstance(Urllib3SSLError, tuple) else (Urllib3SSLError,)
-        )
-
-        if isinstance(exc, (*certificate_errors, *urllib_errors)):
-            return True
-
-        message = str(exc).lower()
-        return "certificate" in message and "verify" in message
-
-    @staticmethod
-    def _load_yfinance_module(yf_module: Optional[Any]) -> Any:
-        if yf_module is not None:
-            return yf_module
-        try:
-            import yfinance as yf  # type: ignore
-
-            return yf
-        except ModuleNotFoundError as exc:  # pragma: no cover - 런타임 의존성
-            raise RuntimeError("yfinance 패키지가 설치되어 있지 않습니다.") from exc
-
-    @staticmethod
-    def _suppress_yf_logging(enabled: bool) -> None:
-        if not enabled:
-            return
-        warnings.filterwarnings(
-            "ignore",
-            message=r"YF\.download\(\) has changed argument auto_adjust default to True",
-            category=FutureWarning,
-        )
-        logging.getLogger("yfinance").setLevel(logging.WARNING)
-        logging.getLogger("yfinance.scrapers.utils").setLevel(logging.WARNING)
-
-    def _resolve_certificate(
-        self,
-        cert_path: Optional[str],
-        auto_copy_cert: bool,
-        cert_copy_dir: Optional[str],
-    ) -> str:
-        candidate = (
-            cert_path
-            or os.environ.get("SSL_CERT_FILE")
-            or os.environ.get("REQUESTS_CA_BUNDLE")
-            or certifi.where()
-        )
-        if not isinstance(candidate, str):
-            raise RuntimeError("유효한 인증서 경로를 확인할 수 없습니다.")
-
-        if auto_copy_cert and self._has_non_ascii(candidate):
-            copied = self._copy_certificate(candidate, cert_copy_dir)
-            if copied:
-                return copied
-        return candidate
-
-    @staticmethod
-    def _has_non_ascii(path: str) -> bool:
-        return any(ord(ch) > 127 for ch in path)
-
-    @staticmethod
-    def _copy_certificate(source_path: str, target_dir_override: Optional[str] = None) -> Optional[str]:
-        try:
-            source = Path(source_path)
-            if not source.exists():
-                logger.warning("[데이터] 인증서 파일을 찾을 수 없어 기본 경로를 사용합니다: %s", source_path)
-                return None
-            target_dir = (
-                Path(target_dir_override)
-                if target_dir_override
-                else Path(__file__).resolve().parent / "certs"
-            )
-            target_dir.mkdir(parents=True, exist_ok=True)
-            target_path = target_dir / source.name
-            shutil.copyfile(source, target_path)
-            if YFinanceDataProvider._has_non_ascii(str(target_path)):
-                logger.warning(
-                    "[데이터] 인증서를 로컬로 복사했지만 경로에 비ASCII 문자가 포함되어 있습니다: %s",
-                    target_path,
-                )
-            return str(target_path)
-        except Exception as exc:
-            logger.warning("[데이터] 인증서 복사 실패(%s). 기본 경로를 사용합니다.", exc)
-            return None
-
-    def _log_download_failure(
-        self,
-        context: str,
-        target: str,
-        exc: MarketDataDownloadError,
-    ) -> None:
-        """중복되는 다운로드 실패 로그를 억제합니다."""
-
-        reason = str(exc).strip()
-        count = self._failure_reasons.get(reason, 0) + 1
-        self._failure_reasons[reason] = count
-
-        if "SSL 인증서" in reason:
-            level = logging.INFO if count == 1 else logging.DEBUG
-        else:
-            level = logging.ERROR if count == 1 else logging.DEBUG
-
-        if level == logging.DEBUG:
-            logger.debug("[%s] %s 실패: %s", context, target, reason)
-        else:
-            logger.log(level, "[%s] %s 실패: %s", context, target, reason)
 
