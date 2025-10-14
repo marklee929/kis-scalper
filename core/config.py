@@ -1,8 +1,13 @@
-import os
 import json
 from typing import Dict, Any
 from pathlib import Path
 import logging
+from copy import deepcopy
+
+try:
+    import yaml
+except ModuleNotFoundError:  # pragma: no cover - fallback in case PyYAML is missing
+    yaml = None
 
 logger = logging.getLogger(__name__)
 
@@ -13,7 +18,9 @@ class Config:
         self.project_root = Path(__file__).parent.parent  # core -> kis-scalper
         self.secrets_file = self.project_root / "config" / "secrets.json"
         self.balance_file = self.project_root / "config" / "balance.json"
+        self.strategy_file = self.project_root / "config" / "strategy_settings.yaml"
         self._config = self._load_secrets()
+        self._strategy_settings = self._load_strategy_settings()
 
     def _load_balance(self) -> float:
         """balance.json에서 초기 잔고를 로드합니다."""
@@ -124,10 +131,29 @@ class Config:
             else:
                 logger.critical(f"CRITICAL: secrets.json 파일을 찾을 수 없습니다. 경로: {self.secrets_file}")
                 raise FileNotFoundError(f"secrets.json not found at {self.secrets_file}")
-                
+
         except Exception as e:
             logger.error(f"[CONFIG] 설정 로드 실패: {e}")
             return self._get_default_config()
+
+    def _load_strategy_settings(self) -> Dict[str, Any]:
+        """전략/필터 설정을 YAML에서 로드합니다."""
+        if not self.strategy_file.exists():
+            logger.warning(f"[CONFIG] strategy_settings.yaml 파일이 없어 기본값을 사용합니다. 경로: {self.strategy_file}")
+            return self._get_default_strategy_settings()
+
+        if yaml is None:
+            logger.error("[CONFIG] PyYAML이 설치되어 있지 않아 전략 설정을 로드할 수 없습니다.")
+            return self._get_default_strategy_settings()
+
+        try:
+            with open(self.strategy_file, 'r', encoding='utf-8') as fp:
+                settings = yaml.safe_load(fp) or {}
+            logger.info("[CONFIG] strategy_settings.yaml 로드 성공")
+            return settings
+        except Exception as exc:
+            logger.error(f"[CONFIG] 전략 설정 로드 실패: {exc}")
+            return self._get_default_strategy_settings()
     
     def _get_default_config(self) -> Dict[str, Any]:
         """기본 설정 반환"""
@@ -135,6 +161,34 @@ class Config:
             "api": {"app_key": "", "app_secret": "", "account_no": ""},
             "telegram": {"bot_token": "", "chat_id": ""},
             "trading": {"budget": 1000000, "max_positions": 5}
+        }
+
+    def _get_default_strategy_settings(self) -> Dict[str, Any]:
+        """전략 설정 기본값."""
+        return {
+            "market_data": {
+                "provider": "yfinance",
+                "max_retries": 3,
+                "retry_backoff": 1.5,
+                "verify": True,
+                "cert_path": None,
+                "cert_copy_dir": None,
+                "auto_copy_cert": False,
+                "suppress_yf_warnings": True,
+            },
+            "universe": {
+                "benchmark_symbol": "^KS11",
+                "default_universe": [],
+                "sector_preference_window_weeks": 4,
+                "top_sector_count": 3,
+            },
+            "trend_filter": {
+                "short_window": 20,
+                "mid_window": 50,
+                "long_window": 200,
+                "min_slope": 0.0,
+                "min_price_above_ma": 0.0,
+            },
         }
     
     def get(self, key: str, default=None):
@@ -148,7 +202,7 @@ class Config:
             else:
                 return default
         return value
-    
+
     def get_kis_config(self) -> Dict:
         """KIS API 설정 반환"""
         return self._config.get("api", {})
@@ -160,7 +214,17 @@ class Config:
     def get_trading_config(self) -> Dict:
         """거래 설정 반환"""
         return self._config.get("trading", {})
-    
+
+    def get_strategy_settings(self) -> Dict[str, Any]:
+        """전략/필터 설정 반환."""
+        return deepcopy(self._strategy_settings)
+
+    def get_market_data_settings(self) -> Dict[str, Any]:
+        """시장 데이터 공급자 설정 반환."""
+        if isinstance(self._strategy_settings, dict):
+            return deepcopy(self._strategy_settings.get("market_data", {}))
+        return {}
+
     def is_real_trading(self) -> bool:
         """실거래 모드 여부"""
         return self.get("api.environment", "DEMO") == "REAL"
