@@ -59,7 +59,6 @@ class IntegratedTradingSystem:
         signal.signal(signal.SIGINT, self._signal_handler)
         self.market_cache = None
         self.strategy_settings = self.config.get('strategy', {})
-        self.market_data_settings = self.config.get('market_data', {})
         self.market_data_provider = None
         self.dynamic_screener: Optional[DynamicScreener] = None
         self.strategy_engine: Optional[StrategyEngine] = None
@@ -80,47 +79,22 @@ class IntegratedTradingSystem:
                 raise Exception("API 계정 인증 실패")
             logger.info("[SYSTEM] API 계정 인증 완료")
 
-            self.strategy_engine = StrategyEngine([
-                MovingAverageCrossoverStrategy(),
-                RSISwingStrategy(),
-                BollingerMeanReversionStrategy(),
-            ])
-            self.portfolio_risk_manager = PortfolioRiskManager(self.strategy_settings.get('risk_management', {}))
-
-            market_data_config = self.market_data_settings or {}
-            provider_name = str(market_data_config.get('provider', 'kis')).lower()
-
-            if provider_name == 'yfinance':
-                yf_config = market_data_config.get('yfinance') or market_data_config
-                try:
-                    self.market_data_provider = YFinanceDataProvider(
-                        max_retries=int(yf_config.get('max_retries', 3)),
-                        retry_backoff=float(yf_config.get('retry_backoff', 1.5)),
-                        verify=bool(yf_config.get('verify', True)),
-                        cert_path=yf_config.get('cert_path'),
-                        cert_copy_dir=yf_config.get('cert_copy_dir'),
-                        auto_copy_cert=bool(yf_config.get('auto_copy_cert', False)),
-                        suppress_yf_warnings=bool(yf_config.get('suppress_yf_warnings', True)),
-                    )
-                    self.dynamic_screener = DynamicScreener(
-                        self.market_data_provider,
-                        self.strategy_settings,
-                        news_fetcher,
-                    )
-                    logger.info("[SYSTEM] yfinance 데이터 공급자를 활성화했습니다.")
-                except Exception as data_exc:
-                    logger.warning("[SYSTEM] yfinance 초기화 실패: %s", data_exc)
-                    self.market_data_provider = None
-                    self.dynamic_screener = None
-            else:
-                logger.info(
-                    "[SYSTEM] market_data.provider=%s 설정으로 yfinance 기반 동적 스크리너를 비활성화합니다.",
-                    provider_name,
-                )
-                if provider_name == 'kis':
-                    logger.info(
-                        "[SYSTEM] KIS/OpenAPI 기반 시세 연동만 사용하며 해외 ETF 보조지표는 조회하지 않습니다."
-                    )
+            try:
+                self.market_data_provider = YFinanceDataProvider()
+                self.dynamic_screener = DynamicScreener(self.market_data_provider, self.strategy_settings, news_fetcher)
+                self.strategy_engine = StrategyEngine([
+                    MovingAverageCrossoverStrategy(),
+                    RSISwingStrategy(),
+                    BollingerMeanReversionStrategy(),
+                ])
+                self.portfolio_risk_manager = PortfolioRiskManager(self.strategy_settings.get('risk_management', {}))
+                logger.info("[SYSTEM] 데이터 기반 스크리너 및 전략 엔진 초기화 완료")
+            except Exception as data_exc:
+                logger.warning("[SYSTEM] 실시간 데이터 공급자 초기화 실패: %s", data_exc)
+                self.market_data_provider = None
+                self.dynamic_screener = None
+                self.strategy_engine = None
+                self.portfolio_risk_manager = None
 
             self.market_cache = init_market_cache(self.config, self.position_manager, self.account_manager)
 
@@ -822,8 +796,7 @@ def load_config() -> Dict:
             'telegram': config.get_telegram_config(),
             'trading': config.get_trading_config(),
             'system': config.get('system', {}),
-            'strategy': config.get_strategy_settings(),
-            'market_data': config.get_market_data_settings(),
+            'strategy': config.get_strategy_settings()
         }
     except Exception as e:
         logger.error(f"[CONFIG] 설정 로드 실패: {e}", exc_info=True)

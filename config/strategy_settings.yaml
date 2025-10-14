@@ -1,17 +1,6 @@
 # 전략 및 필터 설정 (예시값)
 # 실제 환경에 맞춰 수정하세요.
 
-market_data:
-  provider: "kis"  # 기본값: KIS API. yfinance 사용 시 "yfinance"로 변경하세요.
-  yfinance:
-    max_retries: 3
-    retry_backoff: 1.5
-    verify: true
-    cert_path: null  # Windows 환경에서 별도 ASCII 경로를 지정하려면 수정하세요.
-    cert_copy_dir: null  # auto_copy_cert 사용 시 인증서를 복사할 경로 (기본값: data/certs)
-    auto_copy_cert: true
-    suppress_yf_warnings: true
-
 universe:
   benchmark_symbol: "^KS11"
   default_universe: ["005930", "000660", "035420", "051910", "035720"]

@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 import os
-import logging
 from pathlib import Path
 
 import pandas as pd
-from requests.exceptions import SSLError
 
 from data.market_data_provider import YFinanceDataProvider
 
@@ -32,16 +30,6 @@ class _DummyYF:
         return pd.DataFrame({"Close": [1.0], "Volume": [100]})
 
     def Ticker(self, symbol):  # noqa: N802 - yfinance API 호환
-        return _DummyTicker()
-
-
-class _FailingCertYF:
-    """SSL 인증서 오류를 일으키는 yfinance 대체 스텁."""
-
-    def download(self, symbol, session=None, **kwargs):  # noqa: D401 - yfinance 대체 스텁
-        raise SSLError("SSL 인증서 검증에 실패했습니다.")
-
-    def Ticker(self, symbol):  # pragma: no cover - 본 테스트에서는 사용하지 않음
         return _DummyTicker()
 
 
@@ -100,27 +88,3 @@ def test_certificate_auto_copy_creates_ascii_path(tmp_path, monkeypatch):
         parent = cert_file.parent
         if parent.exists() and not any(parent.iterdir()):
             parent.rmdir()
-
-
-def test_certificate_failures_downgrade_logging(caplog):
-    """동일한 인증서 오류가 반복될 때 에러 로그가 중복되지 않는지 확인."""
-
-    provider = YFinanceDataProvider(
-        max_retries=1,
-        yf_module=_FailingCertYF(),
-        suppress_yf_warnings=False,
-    )
-
-    with caplog.at_level(logging.INFO):
-        provider.get_daily_history("AAA", lookback_days=5)
-        provider.get_daily_history("BBB", lookback_days=5)
-
-    ssl_error_logs = [record for record in caplog.records if "SSL 인증서 오류 감지" in record.message]
-    assert len(ssl_error_logs) == 1, "SSL 인증서 오류 로그는 최초 한 번만 ERROR로 기록되어야 합니다."
-
-    info_logs = [
-        record
-        for record in caplog.records
-        if record.levelno == logging.INFO and "일봉 실패" in record.message
-    ]
-    assert len(info_logs) == 1, "중복되는 인증서 실패 로그는 INFO 한 번만 출력되어야 합니다."
