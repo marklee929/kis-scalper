@@ -33,18 +33,8 @@ secrets.json
 # Build / dist
 build/
 dist/
-config/
-secrets.json
-.env
-.env.*
-__pycache__/
-logs/
-*.log
-*.pem
-*.p12
-*.key
-*.cer
-*.sqlite
-*.db
 
+# Project specific
+config/*
+!config/strategy_settings.yaml
 config/secrets.json
