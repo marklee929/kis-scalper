@@ -59,7 +59,6 @@ class IntegratedTradingSystem:
         signal.signal(signal.SIGINT, self._signal_handler)
         self.market_cache = None
         self.strategy_settings = self.config.get('strategy', {})
-        self.market_data_settings = self.config.get('market_data', {})
         self.market_data_provider = None
         self.dynamic_screener: Optional[DynamicScreener] = None
         self.strategy_engine: Optional[StrategyEngine] = None
@@ -81,16 +80,7 @@ class IntegratedTradingSystem:
             logger.info("[SYSTEM] API 계정 인증 완료")
 
             try:
-                market_data_config = self.market_data_settings or {}
-                self.market_data_provider = YFinanceDataProvider(
-                    max_retries=int(market_data_config.get('max_retries', 3)),
-                    retry_backoff=float(market_data_config.get('retry_backoff', 1.5)),
-                    verify=bool(market_data_config.get('verify', True)),
-                    cert_path=market_data_config.get('cert_path'),
-                    cert_copy_dir=market_data_config.get('cert_copy_dir'),
-                    auto_copy_cert=bool(market_data_config.get('auto_copy_cert', False)),
-                    suppress_yf_warnings=bool(market_data_config.get('suppress_yf_warnings', True)),
-                )
+                self.market_data_provider = YFinanceDataProvider()
                 self.dynamic_screener = DynamicScreener(self.market_data_provider, self.strategy_settings, news_fetcher)
                 self.strategy_engine = StrategyEngine([
                     MovingAverageCrossoverStrategy(),
@@ -806,8 +796,7 @@ def load_config() -> Dict:
             'telegram': config.get_telegram_config(),
             'trading': config.get_trading_config(),
             'system': config.get('system', {}),
-            'strategy': config.get_strategy_settings(),
-            'market_data': config.get_market_data_settings(),
+            'strategy': config.get_strategy_settings()
         }
     except Exception as e:
         logger.error(f"[CONFIG] 설정 로드 실패: {e}", exc_info=True)

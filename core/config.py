@@ -166,16 +166,6 @@ class Config:
     def _get_default_strategy_settings(self) -> Dict[str, Any]:
         """전략 설정 기본값."""
         return {
-            "market_data": {
-                "provider": "yfinance",
-                "max_retries": 3,
-                "retry_backoff": 1.5,
-                "verify": True,
-                "cert_path": None,
-                "cert_copy_dir": None,
-                "auto_copy_cert": False,
-                "suppress_yf_warnings": True,
-            },
             "universe": {
                 "benchmark_symbol": "^KS11",
                 "default_universe": [],
@@ -218,13 +208,7 @@ class Config:
     def get_strategy_settings(self) -> Dict[str, Any]:
         """전략/필터 설정 반환."""
         return deepcopy(self._strategy_settings)
-
-    def get_market_data_settings(self) -> Dict[str, Any]:
-        """시장 데이터 공급자 설정 반환."""
-        if isinstance(self._strategy_settings, dict):
-            return deepcopy(self._strategy_settings.get("market_data", {}))
-        return {}
-
+    
     def is_real_trading(self) -> bool:
         """실거래 모드 여부"""
         return self.get("api.environment", "DEMO") == "REAL"
