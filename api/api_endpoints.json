@@ -17,6 +17,18 @@
         "tr_id": "FHKST01010100",
         "token_required": true
     },
+    "daily_price": {
+        "url": "/uapi/domestic-stock/v1/quotations/inquire-daily-price",
+        "method": "GET",
+        "tr_id": "FHKST01010400",
+        "token_required": true
+    },
+    "intraday_price": {
+        "url": "/uapi/domestic-stock/v1/quotations/inquire-time-itemchartprice",
+        "method": "GET",
+        "tr_id": "FHKST03010100",
+        "token_required": true
+    },
     "volume_rank": {
         "url": "/uapi/domestic-stock/v1/quotations/volume-rank",
         "method": "GET",

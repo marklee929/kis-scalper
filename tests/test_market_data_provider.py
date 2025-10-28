@@ -1,90 +1,80 @@
-"""YFinanceDataProvider 관련 단위 테스트."""
-
+﻿"""Unit tests for KISMarketDataProvider."""
 from __future__ import annotations
 
-import os
+import sys
 from pathlib import Path
+
+# Ensure project root is on sys.path for package-less layout
+sys.path.append(str(Path(__file__).resolve().parents[1]))
+
 
 import pandas as pd
 
-from data.market_data_provider import YFinanceDataProvider
 
 
-class _DummyTicker:
-    """yfinance.Ticker를 흉내 내는 단순 스텁."""
+from data.market_data_provider import KISMarketDataProvider
 
+
+class DummyAccountManager:
     def __init__(self) -> None:
-        self.info = {}
-        self.calendar = pd.DataFrame()
+        self.daily_calls = []
+        self.intraday_calls = []
+
+    def get_daily_candles(self, stock_code: str, count: int = 120):
+        self.daily_calls.append((stock_code, count))
+        return [
+            {"date": "20250101", "open": 100.0, "high": 110.0, "low": 95.0, "close": 105.0, "volume": 1000},
+            {"date": "20250102", "open": 105.0, "high": 112.0, "low": 102.0, "close": 110.0, "volume": 1500},
+        ]
+
+    def get_intraday_candles(self, stock_code: str, limit: int = 120):
+        self.intraday_calls.append((stock_code, limit))
+        if stock_code == "EMPTY":
+            return []
+        return [
+            {"time": "20250102 090000", "open": 108.0, "high": 111.0, "low": 107.0, "close": 110.0, "volume": 300},
+            {"time": "20250102 091000", "open": 110.0, "high": 113.0, "low": 109.0, "close": 112.0, "volume": 500},
+        ]
 
 
-class _DummyYF:
-    """yfinance 모듈을 대체하기 위한 테스트 스텁."""
-
-    def __init__(self) -> None:
-        self.calls = []
-
-    def download(self, symbol, session=None, **kwargs):  # noqa: D401 - yfinance 대체 스텁
-        """더미 다운로드 함수."""
-        self.calls.append((symbol, kwargs))
-        return pd.DataFrame({"Close": [1.0], "Volume": [100]})
-
-    def Ticker(self, symbol):  # noqa: N802 - yfinance API 호환
-        return _DummyTicker()
+def _make_provider(sector_symbols=None):
+    manager = DummyAccountManager()
+    provider = KISMarketDataProvider(manager, sector_symbols=sector_symbols or [])
+    return manager, provider
 
 
-def test_download_sets_auto_adjust_flag(tmp_path):
-    """_download 호출 시 auto_adjust=False가 전달되는지 확인."""
+def test_daily_history_frame():
+    manager, provider = _make_provider()
+    df = provider.get_daily_history("005930", lookback_days=2)
+    assert isinstance(df, pd.DataFrame)
+    assert list(df.columns) == ["Open", "High", "Low", "Close", "Volume"]
+    assert manager.daily_calls, "daily API should be invoked"
 
-    cert_dir = tmp_path / "certs"
-    cert_dir.mkdir()
-    cert_path = cert_dir / "cacert.pem"
-    cert_path.write_text("dummy")
 
-    dummy_yf = _DummyYF()
-    provider = YFinanceDataProvider(
-        verify=True,
-        cert_path=str(cert_path),
-        yf_module=dummy_yf,
-        suppress_yf_warnings=False,
-    )
-
-    df = provider._download("TEST")
+def test_intraday_history_uses_api_rows():
+    manager, provider = _make_provider()
+    df = provider.get_intraday_history("005930")
     assert not df.empty
-    assert dummy_yf.calls, "yfinance download 호출이 수행되어야 합니다."
-    _, kwargs = dummy_yf.calls[0]
-    assert kwargs.get("auto_adjust") is False
+    assert df.iloc[-1]["Close"] == 112.0
+    assert manager.intraday_calls, "intraday API should be invoked"
 
 
-def test_certificate_auto_copy_creates_ascii_path(tmp_path, monkeypatch):
-    """auto_copy_cert 설정 시 비ASCII 경로를 안전한 경로로 복사하는지 확인."""
+def test_intraday_fallback_to_daily_when_empty():
+    manager, provider = _make_provider()
+    df = provider.get_intraday_history("EMPTY")
+    assert not df.empty  # fallback should provide data
+    assert "Close" in df.columns
 
-    non_ascii_dir = tmp_path / "한글경로"
-    non_ascii_dir.mkdir()
-    source_cert = non_ascii_dir / "cacert.pem"
-    source_cert.write_text("dummy")
 
-    monkeypatch.setenv("SSL_CERT_FILE", "", prepend=False)
-    monkeypatch.setenv("REQUESTS_CA_BUNDLE", "", prepend=False)
+def test_sector_performance_aggregates_returns():
+    manager, provider = _make_provider(sector_symbols=["SEC001"])
+    rows = provider.get_sector_performance(lookback_weeks=1)
+    assert not rows.empty
+    assert rows.iloc[0]["symbol"] == "SEC001"
 
-    provider = YFinanceDataProvider(
-        verify=True,
-        cert_path=str(source_cert),
-        auto_copy_cert=True,
-        yf_module=_DummyYF(),
-        suppress_yf_warnings=False,
-    )
 
-    verify_path = provider._session.verify
-    assert isinstance(verify_path, str)
-    assert os.path.exists(verify_path)
-    assert all(ord(ch) < 128 for ch in verify_path)
-    assert os.environ.get("SSL_CERT_FILE") == verify_path
-    assert os.environ.get("REQUESTS_CA_BUNDLE") == verify_path
-
-    cert_file = Path(verify_path)
-    if cert_file.exists():
-        cert_file.unlink()
-        parent = cert_file.parent
-        if parent.exists() and not any(parent.iterdir()):
-            parent.rmdir()
+def test_fundamentals_returns_defaults():
+    _, provider = _make_provider()
+    snapshot = provider.get_fundamentals("005930")
+    assert snapshot.symbol == "005930"
+    assert snapshot.current_ratio >= 0

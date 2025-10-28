@@ -23,10 +23,93 @@ class KISAccountManager:
         self.api = KISApi(app_key, app_secret, account_no)
         logger.info("✅ [Manager] KISAccountManager 초기화 완료 (KISApi 사용)")
 
+    @staticmethod
+    def _normalize_code(stock_code: str) -> str:
+        """국내 종목 코드를 6자리 형식으로 정규화"""
+        cleaned = (stock_code or "").replace("-", "").replace(".", "")
+        return cleaned.lstrip("A").zfill(6)
+
     def _get_account_parts(self):
         """계좌번호를 CANO와 ACNT_PRDT_CD로 분리"""
         account_parts = self.account_no.replace('-', '')
         return account_parts[:8], account_parts[8:]
+
+
+    def get_daily_candles(self, stock_code: str, count: int = 120) -> List[Dict[str, float]]:
+        """일자별 OHLC 데이터를 최신 순으로 요청"""
+        code = self._normalize_code(stock_code)
+        params = {
+            "FID_COND_MRKT_DIV_CODE": "J",
+            "FID_INPUT_ISCD": code,
+            "FID_PERIOD_DIV_CODE": "D",
+            "FID_ORG_ADJ_PRC": "0",
+        }
+        try:
+            data = self.api.request("daily_price", params=params)
+        except Exception as exc:  # pragma: no cover - 네트워크 오류 대비
+            logger.error("[DAILY] %s 일봉 조회 실패: %s", stock_code, exc)
+            return []
+
+        rows = data.get("output2") or []
+        candles: List[Dict[str, float]] = []
+        for row in rows[:count]:
+            try:
+                candles.append({
+                    "date": row.get("stck_bsop_date"),
+                    "open": float(row.get("stck_oprc", 0) or 0),
+                    "high": float(row.get("stck_hgpr", 0) or 0),
+                    "low": float(row.get("stck_lwpr", 0) or 0),
+                    "close": float(row.get("stck_clpr", 0) or 0),
+                    "volume": float(row.get("acml_vol", 0) or 0),
+                })
+            except (TypeError, ValueError):
+                continue
+        candles.reverse()  # 과거 -> 최신 순으로 정렬
+        return candles
+
+    def get_intraday_candles(self, stock_code: str, limit: int = 120) -> List[Dict[str, float]]:
+        """분봉 데이터를 조회한다. KIS API 미지원 구간은 일봉을 재사용"""
+        code = self._normalize_code(stock_code)
+        params = {
+            "FID_COND_MRKT_DIV_CODE": "J",
+            "FID_INPUT_ISCD": code,
+            "FID_INPUT_HOUR_1": "090000",
+            "FID_INPUT_HOUR_2": "153000",
+            "FID_PW_DATA_INCU_YN": "Y",
+            "FID_HOUR_CLS_CODE": "0",
+        }
+        try:
+            data = self.api.request("intraday_price", params=params)
+        except Exception as exc:
+            logger.warning("[INTRADAY] %s 분봉 조회 실패, 일봉 사용: %s", stock_code, exc)
+            daily = self.get_daily_candles(stock_code, count=min(limit, 20))
+            return [
+                {
+                    "date": item.get("date"),
+                    "open": item.get("open", 0.0),
+                    "high": item.get("high", 0.0),
+                    "low": item.get("low", 0.0),
+                    "close": item.get("close", 0.0),
+                }
+                for item in daily
+            ]
+
+        rows = data.get("output2") or []
+        candles: List[Dict[str, float]] = []
+        for row in rows[:limit]:
+            try:
+                candles.append({
+                    "time": row.get("stck_cntg_hour"),
+                    "open": float(row.get("stck_oprc", 0) or 0),
+                    "high": float(row.get("stck_hgpr", 0) or 0),
+                    "low": float(row.get("stck_lwpr", 0) or 0),
+                    "close": float(row.get("stck_prpr", 0) or 0),
+                    "volume": float(row.get("cntg_vol", 0) or 0),
+                })
+            except (TypeError, ValueError):
+                continue
+        candles.reverse()
+        return candles
 
     def get_simple_balance(self) -> int:
         """간단한 잔고 조회 - 현재 사용가능 금액만 반환"""

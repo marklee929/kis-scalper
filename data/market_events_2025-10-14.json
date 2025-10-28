@@ -1,0 +1,93 @@
+{
+  "10141412": {
+    "062970": {
+      "price_group": "p_under_5k",
+      "turnover_tier": "v_high",
+      "time": "2025-10-14T14:12:47.955325",
+      "price": 4270.0,
+      "high": 4535.0,
+      "low": 3620.0,
+      "exec_vol": 210.0,
+      "acc_vol": 22046911.0,
+      "change_rate": 22.35
+    }
+  },
+  "10141418": {
+    "062970": {
+      "price_group": "p_under_5k",
+      "turnover_tier": "v_high",
+      "time": "2025-10-14T14:18:58.191727",
+      "price": 4195.0,
+      "high": 4535.0,
+      "low": 3620.0,
+      "exec_vol": 10.0,
+      "acc_vol": 22409806.0,
+      "change_rate": 20.2
+    }
+  },
+  "10141419": {
+    "062970": {
+      "price_group": "p_under_5k",
+      "turnover_tier": "v_high",
+      "time": "2025-10-14T14:19:58.407755",
+      "price": 4240.0,
+      "high": 4535.0,
+      "low": 3620.0,
+      "exec_vol": 1.0,
+      "acc_vol": 22489672.0,
+      "change_rate": 21.49
+    }
+  },
+  "10141420": {
+    "062970": {
+      "price_group": "p_under_5k",
+      "turnover_tier": "v_high",
+      "time": "2025-10-14T14:20:54.971899",
+      "price": 4210.0,
+      "high": 4535.0,
+      "low": 3620.0,
+      "exec_vol": 78.0,
+      "acc_vol": 22533334.0,
+      "change_rate": 20.63
+    }
+  },
+  "10141421": {
+    "062970": {
+      "price_group": "p_under_5k",
+      "turnover_tier": "v_high",
+      "time": "2025-10-14T14:21:55.181612",
+      "price": 4220.0,
+      "high": 4535.0,
+      "low": 3620.0,
+      "exec_vol": 66.0,
+      "acc_vol": 22546155.0,
+      "change_rate": 20.92
+    }
+  },
+  "10141422": {
+    "062970": {
+      "price_group": "p_under_5k",
+      "turnover_tier": "v_high",
+      "time": "2025-10-14T14:22:59.843907",
+      "price": 4240.0,
+      "high": 4535.0,
+      "low": 3620.0,
+      "exec_vol": 48.0,
+      "acc_vol": 22604275.0,
+      "change_rate": 21.49
+    }
+  },
+  "10141423": {
+    "062970": {
+      "price_group": "p_under_5k",
+      "turnover_tier": "v_high",
+      "time": "2025-10-14T14:23:04.125721",
+      "price": 4240.0,
+      "high": 4535.0,
+      "low": 3620.0,
+      "exec_vol": 1.0,
+      "acc_vol": 22609679.0,
+      "change_rate": 21.49
+    }
+  }
+}
