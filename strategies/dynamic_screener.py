@@ -117,7 +117,11 @@ class DynamicScreener:
         weeks = int(cfg.get("sector_preference_window_weeks", 4))
         sector_df = self.provider.get_sector_performance(weeks)
         if sector_df.empty:
-            logger.warning("[스크리너] 섹터 수익률 데이터를 얻지 못했습니다.")
+            symbols = getattr(self.provider, "_sector_symbols", [])
+            logger.warning(
+                "[스크리너] 섹터 수익률 데이터를 얻지 못했습니다. 요청 대상: %s",
+                symbols or "설정된 섹터 코드 없음",
+            )
             return pd.DataFrame(), []
 
         sector_df = sector_df.sort_values("return", ascending=False).reset_index(drop=True)

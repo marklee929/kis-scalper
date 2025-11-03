@@ -502,6 +502,12 @@ class IntegratedTradingSystem:
                     logger.info("[SCREENER] 醫?/????蹂???щ━?????..")
 
                     turnover_stocks = self.account_manager.get_turnover_ranking(count=150) or []
+                    turnover_count = len(turnover_stocks)
+                    if turnover_count == 0:
+                        logger.warning("[SCREENER] 거래대금 상위 목록을 가져오지 못했습니다. API 응답이 비어 있거나 필터링되었습니다.")
+                    else:
+                        sample_codes = [s.get('code') for s in turnover_stocks[:5]]
+                        logger.info(f"[SCREENER] 거래대금 상위 {turnover_count}개 수신 (예시: {sample_codes})")
                     universe = self._extract_universe_symbols(turnover_stocks)
                     code_name_map = {}
                     for stock in turnover_stocks:
@@ -768,6 +774,7 @@ class IntegratedTradingSystem:
     def shutdown(self):
         if not self.shutdown_event.is_set():
             logger.info("[SYSTEM] 종료 이벤트 플래그를 설정합니다")
+            self.shutdown_event.set()
             logger.info("[SYSTEM] 시스템 종료 절차를 시작합니다")
             if self.ws_manager:
                 self.ws_manager.stop()

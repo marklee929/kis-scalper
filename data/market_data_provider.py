@@ -151,6 +151,7 @@ class KISMarketDataProvider(MarketDataProvider):
     def get_sector_performance(self, lookback_weeks: int) -> pd.DataFrame:
         symbols = self._sector_symbols
         if not symbols:
+            logger.warning("[KIS] 섹터 코드 목록이 비어 있어 수익률을 계산할 수 없습니다.")
             return pd.DataFrame()
 
         rows = []
@@ -158,15 +159,20 @@ class KISMarketDataProvider(MarketDataProvider):
         for code in symbols:
             candles = self._manager.get_daily_candles(code, count=lookback_days + 5)
             if len(candles) < 2:
+                logger.debug("[KIS] 섹터 %s 일봉 데이터가 부족합니다: %d건", code, len(candles))
                 continue
             try:
                 start = float(candles[0].get("close", 0))
                 end = float(candles[-1].get("close", 0))
             except (TypeError, ValueError):
+                logger.debug("[KIS] 섹터 %s 종가 값을 변환하지 못했습니다: %s → %s", code, candles[0].get("close"), candles[-1].get("close"))
                 continue
             if start <= 0:
+                logger.debug("[KIS] 섹터 %s 시작 종가가 0 이하입니다: %s", code, start)
                 continue
             rows.append({"symbol": code, "return": (end / start) - 1})
+        if not rows:
+            logger.warning("[KIS] 섹터 수익률 계산 결과가 비어 있습니다. 요청 코드: %s", symbols)
         return pd.DataFrame(rows)
 
     def get_fundamentals(self, symbol: str) -> FundamentalSnapshot:

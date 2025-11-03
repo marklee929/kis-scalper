@@ -2,11 +2,10 @@
 KIS API 계정 관리자 (v3: Limit-then-Market 로직 추가)
 """
 import time
+from datetime import datetime
 from typing import Dict, List, Optional
-import logging
+from utils.logger import logger
 from api.kis_api import KISApi
-
-logger = logging.getLogger(__name__)
 
 class OrderResult:
     def __init__(self, ok: bool, order_id: Optional[str], filled_qty: int, msg: str = ""):
@@ -340,24 +339,34 @@ class KISAccountManager:
         try:
             logger.info(f"📊 [TURNOVER] 거래대금 순위 조회 시작 (상위 {count}개)")
             params = {
-                "FID_COND_MRKT_DIV_CODE": "J",
-                "FID_COND_SCR_DIV_CODE": "20172", # 거래대금 순위
-                "FID_INPUT_ISCD": "0000",
-                "FID_DIV_CLS_CODE": "0",
-                "FID_BLNG_CLS_CODE": "0",
-                "FID_TRGT_CLS_CODE": "111111111",
-                "FID_TRGT_EXLS_CLS_CODE": "100001011",
-                "FID_INPUT_PRICE_1": "",
-                "FID_INPUT_PRICE_2": "",
-                "FID_VOL_CNT": "",
-                "FID_INPUT_DATE_1": ""
+                "fid_cond_mrkt_div_code": "J",          # 주식
+                "fid_cond_scr_div_code": "20172",       # 거래대금 순위
+                "fid_input_iscd": "0000",               # 전체 시장
+                "fid_div_cls_code": "0",
+                "fid_blng_cls_code": "0",
+                "fid_trgt_cls_code": "",
+                "fid_trgt_exls_cls_code": "ETF ETN",  # 제외 없음
+                "fid_input_price_1": "",
+                "fid_input_price_2": "",
+                "fid_vol_cnt": "",
+                "fid_input_date_1": datetime.now().strftime("%Y%m%d"),
             }
+            logger.debug("📝 [TURNOVER] 요청 파라미터: %s", params)
             data = self.api.request("volume_rank", params=params) # endpoint는 동일
+
+            logger.info("📝 [TURNOVER] API 응답: %s", data)
+
             if not (data and data.get("rt_cd") == "0"):
+                logger.error("❌ [TURNOVER] API 응답이 비정상입니다: %s", data)
+                return []
+
+            output_rows = data.get("output") or []
+            if not output_rows:
+                logger.warning("⚠️ [TURNOVER] API 응답에 거래대금 순위 데이터가 비어 있습니다: %s", data)
                 return []
             
             turnover_stocks = []
-            for i, stock in enumerate(data.get("output", [])[:count]):
+            for i, stock in enumerate(output_rows[:count]):
                 try:
                     stock_code = stock.get('mksc_shrn_iscd', '').zfill(6)
                     stock_name = stock.get('hts_kor_isnm', '')
@@ -378,6 +387,8 @@ class KISAccountManager:
                 except (ValueError, TypeError) as e:
                     logger.warning(f"⚠️ [TURNOVER] 종목 데이터 파싱 실패: {stock.get('hts_kor_isnm', 'Unknown')} - {e}")
                     continue
+            if not turnover_stocks:
+                logger.warning("⚠️ [TURNOVER] 거래대금 순위 파싱 결과가 없습니다. 첫 번째 응답: %s", output_rows[:1])
             logger.info(f"✅ [TURNOVER] 거래대금 순위 {len(turnover_stocks)}개 파싱 완료")
             return turnover_stocks
         except Exception as e:
