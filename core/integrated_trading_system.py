@@ -98,6 +98,7 @@ class IntegratedTradingSystem:
                 self.strategy_engine = None
                 self.portfolio_risk_manager = None
             self.market_cache = init_market_cache(self.config, self.position_manager, self.account_manager)
+            setattr(self.account_manager, "market_cache", self.market_cache)
 
             self.beginning_total_assets = self.account_manager.get_total_assets()
             if self.beginning_total_assets == 0:
@@ -175,7 +176,7 @@ class IntegratedTradingSystem:
             now = datetime.now()
             if now.time() >= dt_time(0, 0) and now.time() < dt_time(0, 1):
                 if self.sell_worker_done_today or self.buy_worker_done_today:
-                    logger.info("[SYSTEM] ???由ъ뀑: ????????섍렇? 珥덇린?????")
+                    logger.info("[SYSTEM] 자정 리셋: 일일 상태 플래그를 초기화합니다")
                     self.sell_worker_done_today = False
                     self.buy_worker_done_today = False
                     self.last_news_timestamp = {}
@@ -202,15 +203,15 @@ class IntegratedTradingSystem:
                             if open_price > 0:
                                 self.sell_open_prices[code] = open_price
                                 self.sell_peaks[code] = max(position.get('price', open_price), open_price)
-                                logger.info(f"[SELL_WORKER] {position['name']} ?? ??? {open_price}")
+                                logger.info(f"[SELL_WORKER] {position['name']} 시초가 확보: {open_price}")
                             else: 
                                 self.sell_open_prices[code] = position.get('price', 0)
                                 self.sell_peaks[code] = position.get('price', 0)
-                                logger.warning(f"[SELL_WORKER] {position['name']} ?? 議고쉶 ??? 留ㅼ닔 ?洹좉????????")
+                                logger.warning(f"[SELL_WORKER] {position['name']} 시초가 조회 실패, 보유 평균가를 사용합니다")
 
                     if not self.positions_to_sell:
                         if not self.sell_worker_done_today:
-                            logger.info("[SELL_WORKER] 紐⑤뱺 蹂댁쑀 醫낅ぉ 留ㅻ룄 ?猷? ???留ㅻ룄 ????醫낅즺????")
+                            logger.info("[SELL_WORKER] 매도 대상이 없어 오늘 매도 작업을 종료합니다")
                             self.sell_worker_done_today = True
                         continue
 
@@ -221,14 +222,14 @@ class IntegratedTradingSystem:
                             self._check_sell_conditions(code, quote.get('price'))
                 
                 if now.time() >= dt_time(15, 20) and not self.sell_worker_done_today:
-                    logger.info("[SELL_WORKER] ??留덇컧 ?媛???? 留ㅻ룄 ????醫낅즺????")
+                    logger.info("[SELL_WORKER] 장 마감으로 매도 워커를 종료합니다")
                     if self.positions_to_sell:
-                        logger.info(f"[SELL_WORKER] 誘몄껌??醫낅ぉ: {list(self.positions_to_sell.keys())}")
+                        logger.info(f"[SELL_WORKER] 미처리 종목: {list(self.positions_to_sell.keys())}")
                     self.sell_worker_done_today = True
 
                 time.sleep(2)
             except Exception as e:
-                logger.error(f"[SELL_WORKER] ?瑜? {e}", exc_info=True)
+                logger.error(f"[SELL_WORKER] 예외 발생: {e}", exc_info=True)
                 time.sleep(60)
 
     def _check_sell_conditions(self, code: str, current_price: float):
@@ -263,14 +264,14 @@ class IntegratedTradingSystem:
         min_profit_pct = trading_config.get('min_profit_pct_sell', 0.001)
         trail_drop_pct = trading_config.get('trail_drop_pct_sell', 0.004)
         if profit >= min_profit_pct and (peak_price / current_price - 1) >= trail_drop_pct:
-            self._execute_sell(code, f"Trailing Stop (??? {profit:.2%})")
+            self._execute_sell(code, f"Trailing Stop (수익률 {profit:.2%})")
             return
 
         open_price = self.sell_open_prices.get(code, 0)
         if open_price > 0:
             open_fail_drop_ratio = trading_config.get('open_fail_drop_ratio', 0.99)
             if profit < min_profit_pct and current_price < (open_price * open_fail_drop_ratio):
-                self._execute_sell(code, f"Open Fail Stop (???? {(current_price/open_price-1):.2%})")
+                self._execute_sell(code, f"Open Fail Stop (수익률 {(current_price/open_price-1):.2%})")
                 return
 
     def _execute_sell(self, code: str, reason: str):
@@ -278,9 +279,9 @@ class IntegratedTradingSystem:
 
         pos = self.positions_to_sell[code]
         req_shares = int(pos['shares'])
-        logger.info(f"[SELL] 留ㅻ룄 議곌굔 異⑹”: {pos['name']} ({code}) - ??? {reason}, ?泥??? {req_shares}")
+        logger.info(f"[SELL] 매도 조건 충족: {pos['name']} ({code}) - 사유 {reason}, 요청 수량 {req_shares}")
 
-        # ???蹂댁쑀/媛????議고쉶
+        # 현재 보유/주문 가능 수량 확인
         try:
             holdings = self.account_manager.get_current_positions()
             avail = 0
@@ -290,17 +291,18 @@ class IntegratedTradingSystem:
                     logger.info(f"[SELL] {pos['name']} available quantity: {avail}")
                     break
         except Exception as e:
-            logger.error(f"[SELL] {pos['name']} 媛????議고쉶 ??? {e}", exc_info=True)
-            avail = 0 # ?????留ㅻ룄 蹂대쪟
+            logger.error(f"[SELL] {pos['name']} 보유 수량 조회 실패: {e}", exc_info=True)
+            avail = 0  # 조회 실패 시 매도 제외
 
         sell_qty = max(0, min(req_shares, avail))
         if sell_qty <= 0:
             logger.warning(f"[SELL] {pos['name']} ({code}) available=0 (requested: {req_shares}); skipping sell")
-            # 媛?????0?硫??????留ㅻ룄 ????? ???紐⑸줉????嫄?            del self.positions_to_sell[code]
+            # 매도할 수량이 없으면 대기 목록에서 제거
+            del self.positions_to_sell[code]
             return
 
         if sell_qty < req_shares:
-            logger.warning(f"[SELL] {pos['name']} ({code}) ?泥???{req_shares})蹂대떎 媛????{avail})?????{sell_qty}二쇰쭔 留ㅻ룄????")
+            logger.warning(f"[SELL] {pos['name']} ({code}) 요청 {req_shares} > 보유 {avail}, 실제 매도 {sell_qty}주")
 
         result = self.account_manager.place_sell_order_market(code, sell_qty)
         if result and result.get('success'):
@@ -311,16 +313,16 @@ class IntegratedTradingSystem:
             logger.info(f"[SELL] Market sell submitted: {pos['name']} ({code}) {sell_qty} shares")
             del self.positions_to_sell[code]
         else:
-            # 二쇰Ц ????? ????瑜?硫붿떆吏 濡쒓퉭
+            # 주문 실패 시 전체 응답을 기록
             error_msg = result.get('error', 'Unknown error')
             full_response = result.get('full_response', {})
-            logger.error(f"[SELL] 留ㅻ룄 二쇰Ц ??? {pos['name']} ({code}), ??? {error_msg}, ??? {full_response}")
+            logger.error(f"[SELL] 시장가 매도 실패: {pos['name']} ({code}), 메시지: {error_msg}, 응답: {full_response}")
 
     def _safe_int(self, value) -> int:
         if isinstance(value, int):
             return value
         try:
-            # API媛 ???????臾몄옄?????諛섑솚???寃쎌슦 泥섎━
+            # API가 문자열을 반환하는 경우 쉼표를 제거
             return int(str(value).replace(',', ''))
         except (ValueError, TypeError):
             return 0
@@ -331,7 +333,7 @@ class IntegratedTradingSystem:
         code = rec.get("code") or rec.get("symbol") or rec.get("mksc_shrn_iscd") or rec.get("srtn_cd") or ""
         rank = rec.get("volume_rank") or rec.get("rank") or rec.get("stck_ranking") or None
 
-        # API ????????嫄곕옒?????'turnover'?????(??곴굅???
+        # API 응답의 다양한 필드에서 거래대금 값을 추출
         turnover = rec.get("turnover") or rec.get("acml_tr_pbmn") or rec.get("acc_trdval") or 0
 
         return {"name": name, "code": code, "volume_rank": rank, "turnover": self._safe_int(turnover), **rec}
@@ -365,7 +367,7 @@ class IntegratedTradingSystem:
                     )
                     for news in cand.news:
                         message_lines.append(
-                            f"    · {news.get('timestamp', '')} {news.get('title', '')} {news.get('link', '')}"
+                            f"    - {news.get('timestamp', '')} {news.get('title', '')} {news.get('link', '')}"
                         )
             else:
                 message_lines.append("- 없음")
@@ -377,7 +379,7 @@ class IntegratedTradingSystem:
                     )
                     for news in cand.news:
                         message_lines.append(
-                            f"    · {news.get('timestamp', '')} {news.get('title', '')} {news.get('link', '')}"
+                            f"    - {news.get('timestamp', '')} {news.get('title', '')} {news.get('link', '')}"
                         )
             else:
                 message_lines.append("- 없음")
@@ -393,7 +395,7 @@ class IntegratedTradingSystem:
                 n = news_fetcher.search_latest_news(name)
                 if n and n.get("title"):
                     ts = n.get("timestamp", "")
-                    lines.append(f"    · {ts} {n['title']} {n['link']}")
+                    lines.append(f"    - {ts} {n['title']} {n['link']}")
             except Exception:
                 pass
 
@@ -487,7 +489,7 @@ class IntegratedTradingSystem:
                 plan.price = price
                 return plan
         except Exception as exc:
-            logger.error(f"[BUY_WORKER] ???湲곕컲 嫄곕옒 怨꾪쉷 ?????? {exc}", exc_info=True)
+            logger.error(f"[BUY_WORKER] 트레이드 플랜 생성 중 예외 발생: {exc}", exc_info=True)
         return None
 
 
@@ -499,9 +501,9 @@ class IntegratedTradingSystem:
             try:
                 now = datetime.now()
                 if self._is_screening_time(now):
-                    logger.info("[SCREENER] 醫?/????蹂???щ━?????..")
+                    logger.info("[SCREENER] 장중 종가 스크리닝을 실행합니다")
 
-                    turnover_stocks = self.account_manager.get_turnover_ranking(count=150) or []
+                    turnover_stocks = self.account_manager.get_turnover_ranking(count=100) or []
                     turnover_count = len(turnover_stocks)
                     if turnover_count == 0:
                         logger.warning("[SCREENER] 거래대금 상위 목록을 가져오지 못했습니다. API 응답이 비어 있거나 필터링되었습니다.")
@@ -518,7 +520,7 @@ class IntegratedTradingSystem:
 
                     used_dynamic = False
                     if self.dynamic_screener:
-                        logger.info("[SCREENER] ????????? %d?醫낅ぉ", len(universe))
+                        logger.info("[SCREENER] 동적 스크리너 대상 %d종목", len(universe))
                         result = self.dynamic_screener.screen(universe)
                         if result.closing_candidates or result.swing_candidates:
                             used_dynamic = True
@@ -538,7 +540,7 @@ class IntegratedTradingSystem:
                                 cand_dict['name'] = code_name_map.get(symbol, cand_dict.get('name', symbol))
                                 self.swing_candidates[cand.symbol] = cand_dict
                         else:
-                            logger.info("[SCREENER] ??????寃곌낵媛 鍮꾩뼱 湲곗〈 洹쒖튃?濡??泥댄빀???")
+                            logger.info("[SCREENER] 동적 스크리너 결과가 없어 기존 규칙을 사용합니다")
 
                     if not used_dynamic:
                         self._legacy_screen(turnover_stocks)
@@ -549,7 +551,7 @@ class IntegratedTradingSystem:
 
                 time.sleep(300)
             except Exception as e:
-                logger.error(f"[SCREENER] ?瑜? {e}", exc_info=True)
+                logger.error(f"[SCREENER] 스크리닝 워커 예외: {e}", exc_info=True)
                 time.sleep(300)
 
     def _news_event_worker(self):
@@ -560,7 +562,7 @@ class IntegratedTradingSystem:
                     time.sleep(20)
                     continue
 
-                logger.info(f"[NEWS-WORKER] {len(self.swing_candidates)}?????蹂??????????..")
+                logger.info(f"[NEWS-WORKER] 스윙 후보 {len(self.swing_candidates)}개 뉴스 확인")
                 for code, stock in self.swing_candidates.items():
                     news_item = news_fetcher.search_latest_news(stock['name'])
                     if news_item and news_item.get('published_at'):
@@ -576,7 +578,7 @@ class IntegratedTradingSystem:
                             )
                 time.sleep(60)
             except Exception as e:
-                logger.error(f"[NEWS-WORKER] ?瑜? {e}", exc_info=True)
+                logger.error(f"[NEWS-WORKER] 예외 발생: {e}", exc_info=True)
                 time.sleep(300)
 
     def _closing_price_buy_worker(self):
@@ -585,7 +587,7 @@ class IntegratedTradingSystem:
             try:
                 now = datetime.now()
                 if self._is_buy_time(now) and not self.buy_worker_done_today:
-                    logger.info("[BUY_WORKER] 醫? 留ㅼ닔 濡쒖쭅 ???(Softmax + LTM 諛⑹떇)")
+                    logger.info("[BUY_WORKER] 장 마감 매수 로직 실행 (Softmax + LTM)")
                     trade_summary.weighted_allocation_used_today = True
                     
                     trading_config = self.config.get('trading', {})
@@ -597,7 +599,7 @@ class IntegratedTradingSystem:
                     candidates = self.closing_price_candidates[:top_n]
 
                     if not candidates:
-                        logger.warning("[BUY_WORKER] 理쒖쥌 留ㅼ닔 ?蹂닿뎔??????? 留ㅼ닔?嫄대꼫????")
+                        logger.warning("[BUY_WORKER] 최종 매수 후보가 없어 매수 작업을 건너뜁니다")
                         self.buy_worker_done_today = True
                         continue
 
@@ -606,7 +608,7 @@ class IntegratedTradingSystem:
                     logger.info(f"[BUY_WORKER] 현재 가용 현금: {initial_cash_balance:,.0f}원")
 
                     if initial_cash_balance < 10000:
-                        logger.warning(f"[BUY_WORKER] 二쇰Ц 媛???湲??{initial_cash_balance:,.0f}????臾????留ㅼ닔?嫄대꼫????")
+                        logger.warning(f"[BUY_WORKER] 주문 가능 금액이 {initial_cash_balance:,.0f}원으로 부족해 매수를 생략합니다")
                         self.buy_worker_done_today = True
                         continue
 
@@ -621,7 +623,7 @@ class IntegratedTradingSystem:
                     weights = np.clip(weights, w_min, w_max)
                     weights /= np.sum(weights)
                     
-                    logger.info(f"[BUY_WORKER] 理쒖쥌 {len(candidates)}?醫낅ぉ 留ㅼ닔 ??? ??? {scores}, 媛以묒튂: {np.round(weights, 2)}")
+                    logger.info(f"[BUY_WORKER] 최종 {len(candidates)}종목 매수 후보 점수 {scores}, 가중치: {np.round(weights, 2)}")
 
                     buy_names = []
                     running_cash_balance = initial_cash_balance
@@ -630,7 +632,7 @@ class IntegratedTradingSystem:
                         name = stock['name']
 
                         if is_etf_like(name, code, trading_config):
-                            logger.warning(f"[BUY_WORKER] 理쒖쥌 留ㅼ닔 ?怨???ETF ???醫낅ぉ ??곕쭅?? {name} ({code})")
+                            logger.warning(f"[BUY_WORKER] 최종 매수 후보에서 ETF 유사 종목 제외: {name} ({code})")
                             notifier.send_message(f"장 마감 매수 제외: ETF로 분류된 종목 {name}")
                             continue
 
@@ -643,7 +645,7 @@ class IntegratedTradingSystem:
                         order_price = best_ask if best_ask > 0 else current_price
 
                         if order_price <= 0:
-                            logger.warning(f"[BUY_WORKER] {name} ({code}) ???媛??蹂?遺議깆쑝?留ㅼ닔?嫄대꼫????")
+                            logger.warning(f"[BUY_WORKER] {name} ({code}) 호가 데이터 부족으로 매수를 건너뜁니다")
                             continue
 
                         trade_plan = self._build_trade_plan(code_clean, order_price, budget_per_stock)
@@ -657,13 +659,13 @@ class IntegratedTradingSystem:
                             strategy_name = 'ClosingPrice'
 
                         if shares <= 0:
-                            logger.warning(f"[BUY_WORKER] {name} ({code}) 怨꾩궛??留ㅼ닔 ????0二쇱엯???")
+                            logger.warning(f"[BUY_WORKER] {name} ({code}) 계산된 수량이 0이라 매수를 생략합니다")
                             continue
 
                         required_cash = shares * order_price
                         if running_cash_balance < required_cash:
                             logger.warning(
-                                f"[BUY_WORKER] {name} ({code}) ??붽툑??{required_cash:,.0f})???怨?{running_cash_balance:,.0f})?珥덇낵???留ㅼ닔?嫄대꼫????"
+                                f"[BUY_WORKER] {name} ({code}) 필요 자금 {required_cash:,.0f}원 > 잔여 현금 {running_cash_balance:,.0f}원, 매수를 생략합니다"
                             )
                             continue
 
@@ -681,14 +683,12 @@ class IntegratedTradingSystem:
                                 if trade_plan:
                                     stop_info = f"{trade_plan.stop_loss:.2f}" if trade_plan.stop_loss else "N/A"
                                     target_info = f"{trade_plan.take_profit:.2f}" if trade_plan.take_profit else "N/A"
-                                    logger.info(
-                                        f"[BUY] ???怨꾪쉷 ??? ???{stop_info} / 紐⑺몴 {target_info}"
-                                    )
+                                    logger.info(f"[BUY] 손절 {stop_info} / 목표가 {target_info}")
                                     if trade_plan.partial_exit:
-                                        logger.info(f"[BUY] 遺?? 怨꾪쉷: {trade_plan.partial_exit}")
+                                        logger.info(f"[BUY] 부분 청산 계획: {trade_plan.partial_exit}")
                                 buy_names.append(name)
                         else:
-                            logger.info(f"[BUY_WORKER] {name} ({code}) {shares}?留ㅼ닔 ???(吏??: {best_ask})")
+                            logger.info(f"[BUY_WORKER] {name} ({code}) {shares}주 매수 시도 (호가: {best_ask})")
                             result = self.account_manager.place_buy_with_limit_then_market(
                                 stock_code=code,
                                 quantity=shares,
@@ -698,7 +698,7 @@ class IntegratedTradingSystem:
                             if result.ok and result.filled_qty > 0:
                                 filled_amount = result.filled_qty * best_ask
                                 running_cash_balance -= filled_amount
-                                logger.info(f"[BUY] LTM 留ㅼ닔 ?怨? {name} ({code}) {result.filled_qty}? 硫붿떆吏: {result.msg}")
+                                logger.info(f"[BUY] LTM 매수 체결: {name} ({code}) {result.filled_qty}주, 메시지: {result.msg}")
                                 self.position_manager.add_position(code, result.filled_qty, best_ask, name)
                                 trade_summary.record_trade(
                                     code=code, name=name, action='BUY', quantity=result.filled_qty, price=best_ask,
@@ -708,14 +708,12 @@ class IntegratedTradingSystem:
                                 if trade_plan:
                                     stop_info = f"{trade_plan.stop_loss:.2f}" if trade_plan.stop_loss else "N/A"
                                     target_info = f"{trade_plan.take_profit:.2f}" if trade_plan.take_profit else "N/A"
-                                    logger.info(
-                                        f"[BUY] ???怨꾪쉷 ??? ???{stop_info} / 紐⑺몴 {target_info}"
-                                    )
+                                    logger.info(f"[BUY] 손절 {stop_info} / 목표가 {target_info}")
                                     if trade_plan.partial_exit:
-                                        logger.info(f"[BUY] 遺?? 怨꾪쉷: {trade_plan.partial_exit}")
+                                        logger.info(f"[BUY] 부분 청산 계획: {trade_plan.partial_exit}")
                                 buy_names.append(name)
                             else:
-                                logger.error(f"[BUY] LTM 留ㅼ닔 理쒖쥌 ??? {name} ({code}). 硫붿떆吏: {result.msg}")
+                                logger.error(f"[BUY] LTM 매수 실패: {name} ({code}). 메시지: {result.msg}")
 
                     if buy_names:
                         notifier.send_message(f"장 마감 매수 완료(LTM 포함): {', '.join(buy_names)}")
@@ -724,12 +722,12 @@ class IntegratedTradingSystem:
                     logger.info("[BUY_WORKER] 금일 장 마감 매수 작업을 마쳤습니다")
                 time.sleep(10)
             except Exception as e:
-                logger.error(f"[BUY_WORKER] ?瑜? {e}", exc_info=True)
+                logger.error(f"[BUY_WORKER] 예외 발생: {e}", exc_info=True)
                 time.sleep(60)
 
     def _update_subscriptions(self, new_codes: Set[str]):
         if not self.ws_manager or not self.ws_manager.is_connected:
-            logger.warning("[SUB_MGR] ??뚯폆???寃?? ???援щ룆???????????????")
+            logger.warning("[SUB_MGR] 웹소켓이 연결되지 않아 구독을 갱신할 수 없습니다")
             return
 
         owned_codes = set(self.position_manager.positions.keys())
@@ -739,13 +737,13 @@ class IntegratedTradingSystem:
         codes_to_remove = self.subscribed_codes - required_codes
 
         if codes_to_add:
-            logger.info(f"[SUB_MCR] ?洹?援щ룆 異?: {list(codes_to_add)}")
+            logger.info(f"[SUB_MGR] 신규 구독 추가: {list(codes_to_add)}")
             for code in codes_to_add:
                 self.ws_manager.subscribe(code)
                 time.sleep(0.3)
         
         if codes_to_remove:
-            logger.info(f"[SUB_MGR] 湲곗〈 援щ룆 ??: {list(codes_to_remove)}")
+            logger.info(f"[SUB_MGR] 구독 해제: {list(codes_to_remove)}")
             for code in codes_to_remove:
                 self.ws_manager.unsubscribe(code)
                 time.sleep(0.3)
@@ -800,7 +798,7 @@ def load_config() -> Dict:
             'strategy': config.get_strategy_settings()
         }
     except Exception as e:
-        logger.error(f"[CONFIG] ???濡쒕뱶 ??? {e}", exc_info=True)
+        logger.error(f"[CONFIG] 설정 로드 실패: {e}", exc_info=True)
         return {}
 
 

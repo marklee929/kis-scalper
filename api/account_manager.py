@@ -2,10 +2,18 @@
 KIS API 계정 관리자 (v3: Limit-then-Market 로직 추가)
 """
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, List, Optional
-from utils.logger import logger
+import logging
 from api.kis_api import KISApi
+import numpy as np
+
+try:
+    from pykrx import stock as krx_stock
+except ModuleNotFoundError:  # pragma: no cover - pykrx가 없을 수도 있음
+    krx_stock = None
+
+logger = logging.getLogger(__name__)
 
 class OrderResult:
     def __init__(self, ok: bool, order_id: Optional[str], filled_qty: int, msg: str = ""):
@@ -21,6 +29,7 @@ class KISAccountManager:
         self.account_no = account_no
         self.api = KISApi(app_key, app_secret, account_no)
         logger.info("✅ [Manager] KISAccountManager 초기화 완료 (KISApi 사용)")
+        self._open_orders_cache = {"timestamp": 0.0, "orders": [], "status": None}
 
     @staticmethod
     def _normalize_code(stock_code: str) -> str:
@@ -196,18 +205,30 @@ class KISAccountManager:
         return self._place_order("TTTC0802U", stock_code, quantity, 0, "01")
 
     def has_open_order(self, stock_code: str) -> bool:
-        """특정 종목에 대한 미체결 주문이 있는지 확인합니다."""
+        """특정 종목의 미체결 주문 여부를 확인합니다."""
         try:
-            open_orders = self.api.inquire_cancellable_orders()
-            if open_orders and open_orders.get("rt_cd") == "0":
-                for order in open_orders.get("output1", []):
-                    if order.get("pdno") == stock_code.lstrip('A').zfill(6):
-                        return True
+            now_ts = time.time()
+            cache = self._open_orders_cache
+            if (now_ts - cache.get("timestamp", 0.0) > 3.0) or cache.get("status") is None:
+                response = self.api.inquire_cancellable_orders()
+                if response and response.get("rt_cd") == "0":
+                    cache["timestamp"] = now_ts
+                    cache["orders"] = response.get("output1", [])
+                    cache["status"] = "OK"
+                else:
+                    cache["timestamp"] = now_ts
+                    cache["orders"] = []
+                    cache["status"] = "FAIL"
+                    if response:
+                        logger.warning("[ORDER] 미체결 조회 실패: %s", response)
+                    return False
+            for order in cache.get("orders", []):
+                if order.get("pdno") == stock_code.lstrip('A').zfill(6):
+                    return True
             return False
         except Exception as e:
-            logger.error(f"[OPEN_ORDER] {stock_code} 미체결 주문 조회 오류: {e}")
+            logger.error(f"[OPEN_ORDER] {stock_code} 미체결 주문 확인 실패: {e}")
             return False
-
     def get_filled_qty(self, order_id: str) -> int:
         """주문 ID로 체결 수량을 조회합니다."""
         try:
@@ -334,67 +355,181 @@ class KISAccountManager:
             logger.error(f"❌ [VOLUME] 거래량 순위 조회 오류: {e}")
             return []
 
+
     def get_turnover_ranking(self, count: int = 20) -> List[Dict]:
-        """거래대금 순위 조회"""
+        """거래대금 상위 종목을 조회한다. API가 비어 있으면 pykrx 데이터로 보강."""
         try:
             logger.info(f"📊 [TURNOVER] 거래대금 순위 조회 시작 (상위 {count}개)")
             params = {
-                "fid_cond_mrkt_div_code": "J",          # 주식
-                "fid_cond_scr_div_code": "20172",       # 거래대금 순위
-                "fid_input_iscd": "0000",               # 전체 시장
-                "fid_div_cls_code": "0",
-                "fid_blng_cls_code": "0",
-                "fid_trgt_cls_code": "",
-                "fid_trgt_exls_cls_code": "ETF ETN",  # 제외 없음
-                "fid_input_price_1": "",
-                "fid_input_price_2": "",
-                "fid_vol_cnt": "",
-                "fid_input_date_1": datetime.now().strftime("%Y%m%d"),
+                "FID_COND_MRKT_DIV_CODE": "J",
+                "FID_COND_SCR_DIV_CODE": "20172",
+                "FID_INPUT_ISCD": "0000",
+                "FID_DIV_CLS_CODE": "0",
+                "FID_BLNG_CLS_CODE": "0",
+                "FID_TRGT_CLS_CODE": "111111111",
+                "FID_TRGT_EXLS_CLS_CODE": "100001011",
+                "FID_INPUT_PRICE_1": "",
+                "FID_INPUT_PRICE_2": "",
+                "FID_VOL_CNT": "",
+                "FID_INPUT_DATE_1": "",
             }
             logger.debug("📝 [TURNOVER] 요청 파라미터: %s", params)
-            data = self.api.request("volume_rank", params=params) # endpoint는 동일
 
-            logger.info("📝 [TURNOVER] API 응답: %s", data)
+            output_rows: List[Dict] = []
+            data = None
+            max_retry = 3
+            for attempt in range(1, max_retry + 1):
+                data = self.api.request("volume_rank", params=params)
+                logger.info("📝 [TURNOVER] API 응답: %s", data)
 
-            if not (data and data.get("rt_cd") == "0"):
-                logger.error("❌ [TURNOVER] API 응답이 비정상입니다: %s", data)
-                return []
+                if not (data and data.get("rt_cd") == "0"):
+                    logger.error("❌ [TURNOVER] API 응답이 비정상입니다: %s", data)
+                    return []
 
-            output_rows = data.get("output") or []
+                output_rows = data.get("output") or data.get("output1") or data.get("output2") or []
+                if output_rows:
+                    break
+
+                if attempt < max_retry:
+                    logger.info("⚠️ [TURNOVER] 응답이 비어 있어 %d회차 재시도합니다...", attempt)
+                    time.sleep(0.5)
+
             if not output_rows:
                 logger.warning("⚠️ [TURNOVER] API 응답에 거래대금 순위 데이터가 비어 있습니다: %s", data)
-                return []
-            
+                fallback = self._fallback_turnover_ranking(count)
+                if fallback:
+                    logger.info("📈 [TURNOVER] KRX 대체 데이터 %d건을 사용합니다", len(fallback))
+                else:
+                    logger.error("❌ [TURNOVER] 기본 API와 대체 데이터 모두 실패했습니다")
+                return fallback
+
             turnover_stocks = []
             for i, stock in enumerate(output_rows[:count]):
                 try:
-                    stock_code = stock.get('mksc_shrn_iscd', '').zfill(6)
-                    stock_name = stock.get('hts_kor_isnm', '')
-                    current_price = int(stock.get('stck_prpr', 0) or 0)
+                    stock_code = stock.get("mksc_shrn_iscd", "").zfill(6)
+                    stock_name = stock.get("hts_kor_isnm", "")
+                    current_price = int(stock.get("stck_prpr", 0) or 0)
                     if not (stock_code and stock_name and current_price > 0):
                         continue
-                    
+
                     stock_info = {
-                        'code': stock_code,
-                        'name': stock_name,
-                        'current_price': current_price,
-                        'change_rate': float(stock.get('prdy_ctrt', 0) or 0),
-                        'volume': int(stock.get('acml_vol', 0) or 0),
-                        'turnover_rank': i + 1, # 거래대금 순위
-                        'turnover': int(stock.get('acml_tr_pbmn', 0) or 0), # 누적 거래대금
+                        "code": stock_code,
+                        "name": stock_name,
+                        "current_price": current_price,
+                        "change_rate": float(stock.get("prdy_ctrt", 0) or 0),
+                        "volume": int(stock.get("acml_vol", 0) or 0),
+                        "turnover_rank": i + 1,
+                        "volume_rank": stock.get("volume_rank"),
+                        "turnover": int(stock.get("acml_tr_pbmn", 0) or 0),
                     }
                     turnover_stocks.append(stock_info)
                 except (ValueError, TypeError) as e:
-                    logger.warning(f"⚠️ [TURNOVER] 종목 데이터 파싱 실패: {stock.get('hts_kor_isnm', 'Unknown')} - {e}")
+                    logger.warning("⚠️ [TURNOVER] 종목 데이터 파싱 실패: %s - %s", stock.get("hts_kor_isnm", "Unknown"), e)
                     continue
+
             if not turnover_stocks:
                 logger.warning("⚠️ [TURNOVER] 거래대금 순위 파싱 결과가 없습니다. 첫 번째 응답: %s", output_rows[:1])
+                fallback = self._fallback_turnover_ranking(count)
+                if fallback:
+                    logger.info("📈 [TURNOVER] KRX 대체 데이터 %d건을 사용합니다", len(fallback))
+                else:
+                    logger.error("❌ [TURNOVER] 기본 API와 대체 데이터 모두 실패했습니다")
+                return fallback
+
             logger.info(f"✅ [TURNOVER] 거래대금 순위 {len(turnover_stocks)}개 파싱 완료")
             return turnover_stocks
         except Exception as e:
             logger.error(f"❌ [TURNOVER] 거래대금 순위 조회 오류: {e}")
+            fallback = self._fallback_turnover_ranking(count)
+            if fallback:
+                logger.info("📈 [TURNOVER] 예외 발생으로 pykrx 대체 데이터를 사용합니다 (%d건)", len(fallback))
+                return fallback
             return []
 
+    def _fallback_turnover_ranking(self, count: int) -> List[Dict]:
+        """KIS API가 실패할 때 pykrx 일별 데이터를 이용해 거래대금 상위를 만든다."""
+        if krx_stock is None:
+            logger.warning("⚠️ [TURNOVER] pykrx 모듈이 없어 보조 거래대금 순위를 생성하지 못했습니다")
+            return []
+
+        for offset in range(0, 5):
+            target_date = (datetime.now() - timedelta(days=offset)).strftime("%Y%m%d")
+            try:
+                df = krx_stock.get_market_ohlcv_by_ticker(target_date)
+            except Exception as exc:
+                logger.warning(f"⚠️ [TURNOVER] pykrx 조회 실패({target_date}): {exc}")
+                continue
+
+            if df is None or df.empty:
+                continue
+
+            if len(df.columns) < 6:
+                logger.warning("⚠️ [TURNOVER] pykrx 데이터 형식이 예상과 달라 보조 랭킹을 만들 수 없습니다")
+                return []
+
+            turnover_col = df.columns[5]
+            df_sorted = df.sort_values(by=turnover_col, ascending=False).head(count)
+            fallback_list: List[Dict] = []
+
+            for rank, (code, row) in enumerate(df_sorted.iterrows(), start=1):
+                ticker = str(code).zfill(6)
+                try:
+                    name = krx_stock.get_market_ticker_name(ticker)
+                except Exception:
+                    name = ticker
+
+                def _to_int(value) -> int:
+                    if value is None:
+                        return 0
+                    try:
+                        if isinstance(value, (int, np.integer)):
+                            return int(value)
+                        if isinstance(value, (float, np.floating)):
+                            if np.isnan(value):
+                                return 0
+                            return int(value)
+                        return int(float(value))
+                    except Exception:
+                        return 0
+
+                def _to_float(value) -> float:
+                    if value is None:
+                        return 0.0
+                    try:
+                        if isinstance(value, (float, np.floating)):
+                            if np.isnan(value):
+                                return 0.0
+                            return float(value)
+                        if isinstance(value, (int, np.integer)):
+                            return float(value)
+                        return float(value)
+                    except Exception:
+                        return 0.0
+
+                current_price = _to_int(row.iloc[3])
+                volume = _to_int(row.iloc[4])
+                turnover = _to_int(row.iloc[5])
+                change_rate = _to_float(row.iloc[6]) if len(row) > 6 else 0.0
+
+                fallback_list.append({
+                    "code": ticker,
+                    "name": name,
+                    "current_price": current_price,
+                    "change_rate": change_rate,
+                    "volume": volume,
+                    "turnover_rank": rank,
+                    "volume_rank": rank,
+                    "turnover": turnover,
+                    "source": "pykrx",
+                    "reference_date": target_date,
+                })
+
+            if fallback_list:
+                logger.info(f"📈 [TURNOVER] pykrx({target_date}) 데이터로 {len(fallback_list)}건 확보")
+                return fallback_list
+
+        logger.warning("⚠️ [TURNOVER] pykrx 보조 데이터에서도 거래대금 정보를 얻지 못했습니다")
+        return []
     def get_stock_price(self, stock_code: str) -> Dict:
         """종목 현재가 조회"""
         try:

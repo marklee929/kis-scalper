@@ -148,6 +148,11 @@ class KISApi:
             else:
                 resp = self.session.post(url, headers=h, params=params, json=body or {}, timeout=20)
 
+            logger.info(f"[api key] {key}")
+
+            #if key == 'volume_rank':
+                #logger.info(f"[API] 응답 결과 {resp} {resp.json()}")
+
             if resp.status_code >= 400:
                 try:
                     j = resp.json()
@@ -266,14 +271,20 @@ class KISApi:
 
     def inquire_cancellable_orders(self) -> Optional[Dict[str, Any]]:
         """미체결된 정정/취소 가능 주문을 조회합니다."""
+        clean_acnt = self.account_no.replace("-", "")
+        cano, acnt_prdt_cd = clean_acnt[:8], clean_acnt[8:]
         params = {
-            "CANO": self.account_no[:8],
-            "ACNT_PRDT_CD": self.account_no[8:],
+            "CANO": cano,
+            "ACNT_PRDT_CD": acnt_prdt_cd,
             "INQR_DVSN_1": "0",
             "INQR_DVSN_2": "0",
-            "STRT_ODNO": "",
             "SLL_BUY_DVSN_CD": "0",
-            "CCLD_YN": "N" # 미체결
+            "STRT_ODNO": "",
+            "PDNO": "",
+            "CCLD_YN": "N",  # 미체결
+            "ORD_GNO_BRNO": "",
+            "CTX_AREA_FK100": "",
+            "CTX_AREA_NK100": "",
         }
         try:
             return self.request("inquire_cancellable_orders", params=params)
