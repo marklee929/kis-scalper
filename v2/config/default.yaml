@@ -1,0 +1,6 @@
+risk_gate:
+  max_daily_loss: 1000000
+  max_exposure: 0.3
+  cooldown_seconds: 300
+  slippage_guard: 0.02
+  liquidity_guard: 100000

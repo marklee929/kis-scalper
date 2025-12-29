@@ -1,0 +1,1 @@
+"""Hibernation storage stubs."""
