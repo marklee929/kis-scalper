@@ -1,0 +1,37 @@
+﻿# v2 config
+kis:
+  env: 'vts'  # vts or prod
+  base_url: ''
+  app_key: ''
+  app_secret: ''
+  account_no: ''
+  custtype: 'P'
+  tr_id: 'H0STCNT0'
+websocket:
+  url: 'ws://ops.koreainvestment.com:21000/ws'
+  ping_interval: 25
+  reconnect_min_delay: 5
+  reconnect_max_delay: 300
+  mock: true
+  mock_tick_interval: 0.2
+symbols:
+  - 'A005930'
+data:
+  bar_1s_window: 120
+  bar_1m_window: 120
+  feature_window_short: 30
+  feature_window_long: 60
+logging:
+  logs_dir: 'v2/logs'
+  transition_prefix: 'transition'
+  summary_prefix: 'summary'
+trading:
+  starting_cash: 10000000
+  fee_rate: 0.00015
+  slippage_rate: 0.0005
+  max_position_size: 100
+  cooldown_seconds: 1
+  max_spread_ratio: 0.003
+model:
+  update_interval_seconds: 1
+  action_size: 1
